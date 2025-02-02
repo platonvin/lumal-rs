@@ -1,0 +1,14 @@
+/target
+/.idea 
+/temp.md
+# perfomance tracing results
+/flame-graph.html
+out.txt
+analysis.json
+analysis.jsoncargo
+/tree.txt
+/assets/scene
+/assets/robot.vox
+
+# imgui file created by nvidia nsight 
+/imgui.ini

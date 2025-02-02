@@ -1,0 +1,20 @@
+[package]
+    name = "lumal"
+    version = "0.1.0"
+    edition = "2021"
+
+[dependencies]
+    # funny thing is that vulkanalia-vma does not in fact support vulkanalia 0.26.0
+    vulkanalia = { version = "0.25.0", features = [
+        "libloading",
+        "provisional",
+        "window",
+    ] }
+    vulkanalia-vma = { version = "0.2.0" }
+    winit = "0.30.8"
+    anyhow = "1"
+    num = "0.4"
+
+[lib]
+    name = "lumal"
+    path = "src/lib.rs" # Path to the library source file
