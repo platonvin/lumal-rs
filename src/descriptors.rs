@@ -1,4 +1,4 @@
-use std::{option, ptr::null, u32::MAX};
+use std::{option, ptr::null};
 
 use crate::Renderer;
 use crate::{

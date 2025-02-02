@@ -12,7 +12,6 @@ use std::result::Result::Ok;
 impl Renderer {
     #[cold]
     #[optimize(speed)]
-    #[cfg_attr(feature = "optimized", optimize("3"))]
     pub fn start_frame(&mut self, command_buffers: &[vk::CommandBuffer]) {
         unsafe {
             self.device.wait_for_fences(
@@ -42,7 +41,7 @@ impl Renderer {
             // it is not just incremented-wrapped because driver might (and will) juggle them around for perfomance reasons
             self.device.acquire_next_image_khr(
                 self.vulkan_data.swapchain,
-                u64::max_value(),
+                u64::MAX,
                 *self.vulkan_data.image_available_semaphores.current(),
                 vk::Fence::null(), // no fence
             )
@@ -53,7 +52,6 @@ impl Renderer {
 
     #[cold]
     #[optimize(speed)]
-    #[cfg_attr(feature = "optimized", optimize("3"))]
     pub fn present_frame(&mut self, window: &Window) {
         let wait_semaphores = [*self.vulkan_data.render_finished_semaphores.current()];
         let swapchains = [self.vulkan_data.swapchain];
@@ -73,7 +71,6 @@ impl Renderer {
 
     #[cold]
     #[optimize(speed)]
-    #[cfg_attr(feature = "optimized", optimize("3"))]
     pub fn end_frame(&mut self, command_buffers: &[vk::CommandBuffer], window: &Window) {
         for command_buffer in command_buffers {
             unsafe {
@@ -113,7 +110,6 @@ impl Renderer {
     // does someone know how to make this cleaner?
     #[cold]
     #[optimize(speed)]
-    #[cfg_attr(feature = "optimized", optimize("3"))]
     fn process_error_code(&mut self, index_code: Result<(u32, SuccessCode), vk::ErrorCode>) {
         // man why did you corrode vulkan. Should i make my own fn wrapper?
         match index_code {
@@ -153,7 +149,6 @@ impl Renderer {
     // does someone know how to make this cleaner?
     #[cold]
     #[optimize(speed)]
-    #[cfg_attr(feature = "optimized", optimize("3"))]
     fn process_success_code(&mut self, index_code: VkResult<SuccessCode>, window: &Window) {
         match index_code {
             Ok(success_code) => {

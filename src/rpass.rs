@@ -16,7 +16,7 @@ use vulkanalia::prelude::v1_3::*;
 impl Renderer {
     #[cold]
     #[optimize(size)]
-        pub fn destroy_render_pass(&mut self, rpass: RenderPass) {
+    pub fn destroy_render_pass(&mut self, rpass: RenderPass) {
         assert!(rpass.render_pass != vk::RenderPass::null());
         assert!(!rpass.framebuffers.is_empty());
         for framebuffer in rpass.framebuffers.into_iter() {
@@ -33,7 +33,7 @@ impl Renderer {
 
     #[cold]
     #[optimize(size)]
-        pub fn create_render_pass(
+    pub fn create_render_pass(
         &self,
         attachments: &[AttachmentDescription],
         spass_attachs: &mut [SubpassDescription],
@@ -173,11 +173,8 @@ impl Renderer {
         trace!();
 
         // Pipes (which are abstractions of Vulkan pipelines) need to know the render pass
-        // for pipe in &mut *spass_attachs[0].pipes {
-        //     pipe.render_pass = render_pass;
-        // }
-        for i in 0..spass_attachs.len() {
-            for pipe in &mut *spass_attachs[i].pipes {
+        for spass_attach in spass_attachs {
+            for pipe in &mut *spass_attach.pipes {
                 pipe.render_pass = render_pass;
             }
         }
@@ -208,7 +205,7 @@ impl Renderer {
     // Function to create subpass dependencies
     #[cold]
     #[optimize(size)]
-        fn create_subpass_dependencies(
+    fn create_subpass_dependencies(
         spass_attachs: &[SubpassDescription],
     ) -> Vec<vk::SubpassDependency> {
         let mut dependencies = Vec::new();
@@ -258,7 +255,7 @@ impl Renderer {
     // Function to create framebuffers
     #[cold]
     #[optimize(size)]
-        fn create_framebuffers(
+    fn create_framebuffers(
         &self,
         // device: &vulkanalia::Device,
         render_pass: vk::RenderPass,
@@ -309,7 +306,7 @@ impl Renderer {
 
     #[cold]
     #[optimize(size)]
-        pub fn cmd_begin_renderpass(
+    pub fn cmd_begin_renderpass(
         &self,
         command_buffer: &vk::CommandBuffer,
         render_pass: &RenderPass,
@@ -336,7 +333,7 @@ impl Renderer {
 
     #[cold]
     #[optimize(size)]
-        pub fn cmd_end_renderpass(
+    pub fn cmd_end_renderpass(
         &self,
         command_buffer: &vk::CommandBuffer,
         render_pass: &mut RenderPass,

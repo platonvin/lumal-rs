@@ -10,7 +10,7 @@ impl Renderer {
     // creates a GPU buffer
     #[cold]
     #[optimize(size)]
-        pub fn create_buffer(&self, usage: vk::BufferUsageFlags, size: usize, host: bool) -> Buffer {
+    pub fn create_buffer(&self, usage: vk::BufferUsageFlags, size: usize, host: bool) -> Buffer {
         // buffers.allocate(self.vulkan_data.settings.fif as usize);
         // buffers = Ring::new(self.vulkan_data.settings.fif as usize, Buffer::default());
 
@@ -65,7 +65,7 @@ impl Renderer {
     // creates ring of vulkan buffers. Optionally maps
     #[cold]
     #[optimize(size)]
-        pub fn create_buffer_rings(
+    pub fn create_buffer_rings(
         &self,
         ring_size: usize,
         usage: vk::BufferUsageFlags,
@@ -90,7 +90,7 @@ impl Renderer {
 
     #[cold]
     #[optimize(size)]
-        pub fn destroy_buffer(&self, buf: Buffer) {
+    pub fn destroy_buffer(&self, buf: Buffer) {
         unsafe {
             // unmap if mapped
             match buf.mapped {
@@ -103,7 +103,7 @@ impl Renderer {
 
     #[cold]
     #[optimize(size)]
-        pub fn destroy_buffer_ring(&self, buffers: Ring<Buffer>) {
+    pub fn destroy_buffer_ring(&self, buffers: Ring<Buffer>) {
         for buf in buffers.data {
             self.destroy_buffer(buf);
         }
@@ -112,7 +112,7 @@ impl Renderer {
     // creates a GPU buffer and copies elements into it
     #[cold]
     #[optimize(size)]
-        pub fn create_elem_buffer<T>(
+    pub fn create_elem_buffer<T>(
         &mut self,
         elements: &[T],
         buffer_usage: vk::BufferUsageFlags,
@@ -129,7 +129,7 @@ impl Renderer {
 
         unsafe {
             copy_nonoverlapping(
-                elements.as_ptr() as *const T,
+                elements.as_ptr(),
                 staging_buffer.mapped.unwrap() as *mut T,
                 count,
             );

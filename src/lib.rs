@@ -305,10 +305,6 @@ pub struct Renderer {
     // that might still be using resources
     pub buffer_deletion_queue: Vec<BufferDeletion>,
     pub image_deletion_queue: Vec<ImageDeletion>,
-
-    // functions to (re)create / destroy all swapchain dependent resources
-    pub create_swapchain_dependent_resources: Option<Box<dyn FnMut(&Window)>>,
-    pub destroy_swapchain_dependent_resources: Option<Box<dyn FnMut(&Window)>>,
 }
 
 impl Renderer {
@@ -317,9 +313,11 @@ impl Renderer {
     pub fn create(settings: &LumalSettings, window: &Window) -> Result<Renderer> {
         println!("Starting app.");
 
-        let mut vulkan_data = VulkanData::default();
+        let mut vulkan_data = VulkanData {
+            validation: settings.debug,
+            ..Default::default()
+        };
 
-        vulkan_data.validation = settings.debug;
         if vulkan_data.validation {
             println!("Validation layers requested.");
         }
@@ -362,8 +360,6 @@ impl Renderer {
                 extra_command_buffers: Ring::new(0, vk::CommandBuffer::default()),
                 buffer_deletion_queue: vec![],
                 image_deletion_queue: vec![],
-                create_swapchain_dependent_resources: None,
-                destroy_swapchain_dependent_resources: None,
             })
         }
     }

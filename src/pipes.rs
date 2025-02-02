@@ -82,7 +82,7 @@ impl Renderer {
                     flags: vk::PipelineShaderStageCreateFlags::empty(),
                     stage: vk::ShaderStageFlags::COMPUTE,
                     module,
-                    name: b"main\0".as_ptr() as *const i8,
+                    name: c"main".as_ptr() as *const i8,
                     specialization_info: std::ptr::null(),
                 },
             )
@@ -185,7 +185,7 @@ impl Renderer {
                     flags: vk::PipelineShaderStageCreateFlags::empty(),
                     stage: stage.stage,
                     module,
-                    name: b"main\0".as_ptr() as *const i8,
+                    name: c"main".as_ptr() as *const i8,
                     specialization_info: std::ptr::null(),
                 }
             })
