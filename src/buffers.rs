@@ -83,7 +83,7 @@ impl Renderer {
 
         // Return the Ring initialized with the images.
         Ok(Ring {
-            data: buffers,
+            data: buffers.into_boxed_slice(),
             index: 0,
         })
     }

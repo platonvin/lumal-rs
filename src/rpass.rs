@@ -16,7 +16,7 @@ use vulkanalia::prelude::v1_3::*;
 impl Renderer {
     #[cold]
     #[optimize(size)]
-    pub fn destroy_render_pass(&mut self, rpass: RenderPass) {
+    pub fn destroy_renderpass(&mut self, rpass: RenderPass) {
         assert!(rpass.render_pass != vk::RenderPass::null());
         assert!(!rpass.framebuffers.is_empty());
         for framebuffer in rpass.framebuffers.into_iter() {
@@ -33,7 +33,7 @@ impl Renderer {
 
     #[cold]
     #[optimize(size)]
-    pub fn create_render_pass(
+    pub fn create_renderpass(
         &self,
         attachments: &[AttachmentDescription],
         spass_attachs: &mut [SubpassDescription],
@@ -50,11 +50,12 @@ impl Renderer {
 
         trace!();
         for (i, attachment) in attachments.iter().enumerate() {
-            assert!(attachment.images.is_some());
-            let images = &mut attachment.images.as_ref().unwrap();
-            assert!(!images.is_empty());
+            let images = attachment.images;
 
-            let first_image = &images[0];
+            // reference to first image in the Ring of images given by pointer
+            // Why do i work with pointers? To trick borrow checker and have a nicer syntax
+            let first_image = &unsafe { &*images }[0]; //
+
             adescs[i] = vk::AttachmentDescription {
                 format: first_image.format,
                 samples: vk::SampleCountFlags::_1,
@@ -80,10 +81,8 @@ impl Renderer {
                 layout: vk::ImageLayout::GENERAL,
             };
 
-            let images_slice = images.as_slice().as_ptr(); // Assuming Ring has as_slice()
-                                                           // let first_image_ptr = images_slice.as_ptr() as *const Image;
-            img2ref.insert(images_slice, i);
-            // img2ref.insert(images.as_ptr(), i as u32);
+            img2ref.insert(images, i);
+
             clears.push(attachment.clear);
         }
         trace!();
@@ -97,28 +96,18 @@ impl Renderer {
 
         for (i, spass_attach) in spass_attachs.iter().enumerate() {
             if let Some(depth) = spass_attach.a_depth {
-                assert!(!(depth).is_empty());
-                let index = *img2ref.get(&depth.as_slice().as_ptr()).unwrap();
-                // dbg!(index);
+                let index = *img2ref.get(&depth).unwrap();
                 sas_refs[i].a_depth = Some(arefs[index])
             } else {
                 sas_refs[i].a_depth = None;
             };
             for color in spass_attach.a_color {
-                if let Some(color_ring) = color {
-                    assert!(!(color_ring).is_empty());
-                    let index = *img2ref.get(&color_ring.as_slice().as_ptr()).unwrap();
-                    // dbg!(index);
-                    sas_refs[i].a_color.push(arefs[index]);
-                }
+                let index = *img2ref.get(&color).unwrap();
+                sas_refs[i].a_color.push(arefs[index]);
             }
             for input in spass_attach.a_input {
-                if let Some(input_ring) = input {
-                    assert!(!(input_ring).is_empty());
-                    let index = *img2ref.get(&input_ring.as_slice().as_ptr()).unwrap();
-                    // dbg!(index);
-                    sas_refs[i].a_input.push(arefs[index]);
-                }
+                let index = *img2ref.get(&input).unwrap();
+                sas_refs[i].a_input.push(arefs[index]);
             }
         }
         trace!();
@@ -182,12 +171,12 @@ impl Renderer {
         // This is the metadata i store in my render pass abstraction. It helps (me).
         rpass.render_pass = render_pass;
         rpass.extent = vk::Extent2D {
-            width: (attachments[0].images.as_ref().unwrap())[0].extent.width,
-            height: (attachments[0].images.as_ref().unwrap())[0].extent.height,
+            width: (unsafe { attachments[0].images.as_ref().unwrap() })[0].extent.width,
+            height: (unsafe { attachments[0].images.as_ref().unwrap() })[0].extent.height,
         };
 
         let binding: Vec<&Ring<Image>> =
-            attachments.iter().filter_map(|desc| desc.images).collect();
+            attachments.iter().filter_map(|desc| Some(unsafe { &*desc.images })).collect();
         let fb_images: &[&Ring<Image>] = binding.as_slice();
         trace!();
 

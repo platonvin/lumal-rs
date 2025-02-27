@@ -18,19 +18,19 @@ pub mod rpass;
 pub mod samplers;
 
 use anyhow::{anyhow, Ok, Result};
-use ring::Ring;
+use ring::*;
 
 use std::ffi::CStr;
 use std::mem::{size_of, size_of_val};
 use std::os::raw::c_void;
 use std::process::exit;
 use std::{collections::HashSet, default};
-use vulkanalia::prelude::v1_3::*;
-use vulkanalia::Version;
 use vulkanalia::{
     bytecode::Bytecode,
     loader::{LibloadingLoader, LIBRARY},
 };
+use vulkanalia::{prelude::v1_3::*, vk::Extent3D};
+use vulkanalia::{vk::ImageAspectFlags, Version};
 use vulkanalia_vma::{self as vma};
 use winit::window::Window;
 use winit::{
@@ -129,7 +129,7 @@ impl RasterPipe {
 impl Default for RasterPipe {
     fn default() -> Self {
         Self {
-            sets: Ring::new(0, vk::DescriptorSet::null()),
+            sets: Default::default(),
             line: Default::default(),
             line_layout: Default::default(),
             set_layout: Default::default(),
@@ -153,7 +153,7 @@ impl Default for ComputePipe {
         Self {
             line: Default::default(),
             line_layout: Default::default(),
-            sets: Ring::new(0, vk::DescriptorSet::null()),
+            sets: Default::default(),
             set_layout: Default::default(),
         }
     }
@@ -172,7 +172,7 @@ impl Default for RenderPass {
     fn default() -> Self {
         Self {
             clear_colors: Default::default(),
-            framebuffers: Ring::new(0, vk::Framebuffer::default()),
+            framebuffers: Default::default(),
             extent: Default::default(),
             render_pass: Default::default(),
         }
@@ -280,6 +280,7 @@ pub struct BufferDeletion {
     pub lifetime: i32,
 }
 
+#[derive(Debug)]
 pub struct Renderer {
     // pub custom_data: Option<T>,
     pub allocator: Option<vma::Allocator>,
@@ -334,7 +335,7 @@ impl Renderer {
             let allocator = vma::Allocator::new(&allocator_options)?;
 
             create_swapchain(window, &instance, &device, &mut vulkan_data)?;
-            create_swapchain_image_views(&device, &mut vulkan_data)?;
+            // create_swapchain_image_views(&device, &mut vulkan_data)?;
             // these are handled by downstream user. Makes no sense to hardcode pipes in renderer
             // example.create_render_pass(&device, &mut data)?;
             // example.create_pipeline(&device, &mut data)?;
@@ -356,8 +357,8 @@ impl Renderer {
                 descriptor_sets_count: 0,
                 image_index: 0, // cause just init'ed, no descriptor setup deferred yet
                 // delayed_descriptor_setups: vec![],
-                main_command_buffers: Ring::new(0, vk::CommandBuffer::default()),
-                extra_command_buffers: Ring::new(0, vk::CommandBuffer::default()),
+                main_command_buffers: Default::default(),
+                extra_command_buffers: Default::default(),
                 buffer_deletion_queue: vec![],
                 image_deletion_queue: vec![],
             })
@@ -448,7 +449,9 @@ impl Renderer {
     }
     /// buffers, images, pipelines - everything created manually should be destroyed manually before this funcall
     pub unsafe fn destroy(&mut self) {
+        self.process_deletion_queues_untill_all_done();
         self.device.destroy_descriptor_pool(self.vulkan_data.descriptor_pool, None);
+        self.device.destroy_command_pool(self.vulkan_data.command_pool, None);
         self.destroy_swapchain();
         self.destroy_sync_primitives();
         // cause author of vulkanalia decided to hide it behind the drop. WHY
@@ -535,6 +538,10 @@ impl Renderer {
                 .unwrap();
             // yep unoptimal but you are not supposed to use this at all
             self.device.queue_wait_idle(self.vulkan_data.graphics_queue).unwrap();
+        }
+        unsafe {
+            self.device
+                .free_command_buffers(self.vulkan_data.command_pool, &[command_buffer]);
         }
     }
 
@@ -768,7 +775,7 @@ impl Renderer {
             self.device.device_wait_idle().unwrap();
 
             create_swapchain(window, &self.instance, &self.device, &mut self.vulkan_data).unwrap();
-            create_swapchain_image_views(&self.device, &mut self.vulkan_data).unwrap();
+            // create_swapchain_image_views(&self.device, &mut self.vulkan_data).unwrap();
             // create_command_pool(&self.instance, &self.device, &mut self.vulkan_data).unwrap();
 
             // match self.create_swapchain_dependent_resources {
@@ -796,7 +803,7 @@ pub struct VulkanData {
     pub swapchain_format: vk::Format,
     pub swapchain_extent: vk::Extent2D,
     pub swapchain: vk::SwapchainKHR,
-    pub swapchain_images: Ring<vk::Image>,
+    pub swapchain_images: Ring<crate::Image>,
     pub swapchain_image_views: Ring<vk::ImageView>,
     // Command Pool
     pub command_pool: vk::CommandPool,
@@ -1024,7 +1031,52 @@ unsafe fn create_swapchain(
 
     data.swapchain = device.create_swapchain_khr(&info, None)?;
 
-    data.swapchain_images = Ring::from_vec(device.get_swapchain_images_khr(data.swapchain)?);
+    data.swapchain_images = Ring::from_vec(
+        device
+            .get_swapchain_images_khr(data.swapchain)
+            .unwrap()
+            .iter()
+            .map(|vk_img| {
+                let components = vk::ComponentMapping::builder()
+                    .r(vk::ComponentSwizzle::IDENTITY)
+                    .g(vk::ComponentSwizzle::IDENTITY)
+                    .b(vk::ComponentSwizzle::IDENTITY)
+                    .a(vk::ComponentSwizzle::IDENTITY);
+
+                let subresource_range = vk::ImageSubresourceRange::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .base_mip_level(0)
+                    .level_count(1)
+                    .base_array_layer(0)
+                    .layer_count(1);
+
+                let info = vk::ImageViewCreateInfo::builder()
+                    .image(*vk_img)
+                    .view_type(vk::ImageViewType::_2D)
+                    .format(data.swapchain_format)
+                    .components(components)
+                    .subresource_range(subresource_range);
+
+                let view = device.create_image_view(&info, None).unwrap();
+
+                Image {
+                    image: *vk_img,
+                    // fuck Vulkanalia
+                    allocation: std::mem::transmute::<*const u8, vma::Allocation>(std::ptr::null()),
+                    view: view,
+                    mip_views: vec![],
+                    format: surface_format.format,
+                    aspect: ImageAspectFlags::COLOR,
+                    extent: Extent3D {
+                        width: extent.width,
+                        height: extent.height,
+                        depth: 1,
+                    },
+                    mip_levels: 0,
+                }
+            })
+            .collect(),
+    );
 
     Ok(())
 }
@@ -1082,45 +1134,6 @@ fn get_swapchain_extent(window: &Window, capabilities: vk::SurfaceCapabilitiesKH
     }
 }
 
-/// Creates image views for the swapchain images.
-#[cold]
-#[optimize(size)]
-unsafe fn create_swapchain_image_views(device: &Device, data: &mut VulkanData) -> Result<()> {
-    data.swapchain_image_views = data
-        .swapchain_images
-        .iter()
-        .map(|i| {
-            let components = vk::ComponentMapping::builder()
-                .r(vk::ComponentSwizzle::IDENTITY)
-                .g(vk::ComponentSwizzle::IDENTITY)
-                .b(vk::ComponentSwizzle::IDENTITY)
-                .a(vk::ComponentSwizzle::IDENTITY);
-
-            let subresource_range = vk::ImageSubresourceRange::builder()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .base_mip_level(0)
-                .level_count(1)
-                .base_array_layer(0)
-                .layer_count(1);
-
-            let info = vk::ImageViewCreateInfo::builder()
-                .image(*i)
-                .view_type(vk::ImageViewType::_2D)
-                .format(data.swapchain_format)
-                .components(components)
-                .subresource_range(subresource_range);
-
-            device.create_image_view(&info, None)
-        })
-        .collect::<Result<_, _>>()?;
-    Ok(())
-}
-
-//================================================
-// Command Pool
-//================================================
-
-/// Creates a command pool.
 #[cold]
 #[optimize(size)]
 unsafe fn create_command_pool(
@@ -1139,7 +1152,6 @@ unsafe fn create_command_pool(
     Ok(())
 }
 
-/// Creates synchronization objects to manage command buffer reuse and rendering.
 #[cold]
 #[optimize(size)]
 unsafe fn create_sync_objects(device: &Device, data: &mut VulkanData) -> Result<()> {
@@ -1159,7 +1171,6 @@ unsafe fn create_sync_objects(device: &Device, data: &mut VulkanData) -> Result<
     Ok(())
 }
 
-/// The indices of the required queue families for a physical device.
 #[derive(Copy, Clone, Debug)]
 struct QueueFamilyIndices {
     graphics: u32,
@@ -1167,7 +1178,6 @@ struct QueueFamilyIndices {
 }
 
 impl QueueFamilyIndices {
-    /// Gets the indices of the required queue families for a physical device.
     #[cold]
     #[optimize(size)]
     unsafe fn get(
@@ -1197,14 +1207,12 @@ impl QueueFamilyIndices {
         if let (Some(graphics), Some(present)) = (graphics, present) {
             Ok(Self { graphics, present })
         } else {
-            // Err(anyhow!(SuitabilityError("Missing required queue families.")))
             println!("Missing required queue families");
             exit(1);
         }
     }
 }
 
-/// The swapchain support for a physical device.
 #[derive(Clone, Debug)]
 struct SwapchainSupport {
     capabilities: vk::SurfaceCapabilitiesKHR,
@@ -1213,7 +1221,6 @@ struct SwapchainSupport {
 }
 
 impl SwapchainSupport {
-    /// Gets the swapchain support for a physical device.
     #[cold]
     #[optimize(size)]
     unsafe fn get(
@@ -1249,6 +1256,5 @@ fn read_file<P: AsRef<Path>>(path: P) -> Vec<u8> {
         "Shader file must be aligned to 4 bytes"
     );
 
-    // Convert to Vec<u8>
     unsafe { std::slice::from_raw_parts(buffer.as_ptr() as *const u8, buffer.len() / 4).to_vec() }
 }

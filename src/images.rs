@@ -9,7 +9,7 @@ use vulkanalia_vma::{self as vma};
 impl Renderer {
     #[cold]
     #[optimize(speed)]
-        pub fn create_image(
+    pub fn create_image(
         &self,
         image_type: vk::ImageType,
         format: vk::Format,
@@ -122,7 +122,7 @@ impl Renderer {
     }
     #[cold]
     #[optimize(speed)]
-        pub fn create_image_ring(
+    pub fn create_image_ring(
         &self,
         size: usize,
         image_type: vk::ImageType,
@@ -156,14 +156,14 @@ impl Renderer {
 
         // Return the Ring initialized with the images.
         Ok(Ring {
-            data: images,
+            data: images.into_boxed_slice(),
             index: 0,
         })
     }
 
     #[cold]
     #[optimize(speed)]
-        pub fn destroy_image(&self, img: &Image) {
+    pub fn destroy_image(&self, img: &Image) {
         unsafe {
             self.device.destroy_image_view(img.view, None);
             self.allocator.as_ref().unwrap().destroy_image(img.image, img.allocation);
@@ -172,7 +172,7 @@ impl Renderer {
 
     #[cold]
     #[optimize(speed)]
-        pub fn destroy_image_ring(&self, images: &Ring<Image>) {
+    pub fn destroy_image_ring(&self, images: &Ring<Image>) {
         for img in images {
             self.destroy_image(img);
         }

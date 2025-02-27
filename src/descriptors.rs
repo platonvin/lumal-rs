@@ -1,15 +1,15 @@
-use std::{option, ptr::null};
-
 use crate::Renderer;
 use crate::{
     ring::Ring, Buffer, DescriptorCounter, Image, LumalSettings, RasterPipe, MAX_FRAMES_IN_FLIGHT,
 };
 use anyhow::*;
+use std::cell::UnsafeCell;
+use std::{option, ptr::null};
 use vulkanalia::vk::{self, DeviceV1_3};
 
 use vulkanalia::prelude::v1_3::*;
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone)]
 pub enum BlendAttachment {
     NoBlend,
     BlendMix,
@@ -19,7 +19,7 @@ pub enum BlendAttachment {
 }
 
 #[allow(non_camel_case_types)]
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum DepthTesting {
     DT_None,
     DT_Read,
@@ -69,8 +69,8 @@ impl PartialEq for LoadStoreOp {
     }
 }
 
-pub struct AttachmentDescription<'lt> {
-    pub images: Option<&'lt Ring<Image>>,
+pub struct AttachmentDescription {
+    pub images: *const Ring<Image>,
     pub load: LoadStoreOp,
     pub store: LoadStoreOp,
     pub sload: LoadStoreOp,
@@ -82,9 +82,9 @@ pub struct AttachmentDescription<'lt> {
 // everything is a a pointer to be able to compare them later
 pub struct SubpassDescription<'lt> {
     pub pipes: &'lt mut [&'lt mut RasterPipe],
-    pub a_input: &'lt [Option<&'lt Ring<Image>>], // Input images for the subpass
-    pub a_color: &'lt [Option<&'lt Ring<Image>>], // Color images for the subpass
-    pub a_depth: Option<&'lt Ring<Image>>,        // Depth image for the subpass
+    pub a_input: &'lt [*const Ring<Image>], // Input images for the subpass
+    pub a_color: &'lt [*const Ring<Image>], // Color images for the subpass
+    pub a_depth: Option<*const Ring<Image>>, // Depth image for the subpass
 }
 
 #[derive(Clone, Default, Debug)]
@@ -104,13 +104,16 @@ pub enum RelativeDescriptorPos {
     First,    // Relative Descriptor position first - for GPU-only
 }
 
+#[derive(Clone, Debug)]
 pub struct ShaderStage {
     pub src: String,
     pub stage: vk::ShaderStageFlags,
 }
 
+#[derive(Clone, Debug)]
 pub struct AttrFormOffs {
     pub format: vk::Format,
+    pub binding: u32,
     pub offset: usize,
 }
 
@@ -416,11 +419,9 @@ impl Renderer {
 
     #[cold]
     #[optimize(size)]
-    pub unsafe fn flush_descriptor_setup(&mut self) -> Result<()> {
+    pub fn flush_descriptor_setup(&mut self) {
         // (actually) create Vulkan descriptor pool
-        self.vulkan_data.descriptor_pool = self.create_descriptor_pool()?;
-
-        Ok(())
+        self.vulkan_data.descriptor_pool = unsafe { self.create_descriptor_pool() }.unwrap();
     }
 
     #[cold]

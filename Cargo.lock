@@ -494,6 +494,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "num",
+ "paste",
  "vulkanalia",
  "vulkanalia-vma",
  "winit",

@@ -6,27 +6,35 @@ use std::ops::{Index, IndexMut}; // lol
 
 #[derive(Clone, Debug, Default)]
 pub struct Ring<T: Default + Clone> {
-    pub data: Vec<T>,
+    pub data: Box<[T]>, // i would love to move len out from Box
     pub index: usize,
 }
 
-impl<T: std::default::Default + Clone> Ring<T> {
+impl<T: Default + Clone> Ring<T> {
     /// Creates a new `Ring` with a given size and initial value for all elements.
     pub fn new(size: usize, initial_value: T) -> Self
     where
         T: Clone,
     {
+        let data = vec![initial_value; size].into_boxed_slice();
+        Self { data, index: 0 }
+    }
+    pub fn from_vec(data: Vec<T>) -> Self {
         Self {
-            data: vec![initial_value; size],
+            data: data.into_boxed_slice(),
             index: 0,
         }
     }
-    pub fn from_vec(data: Vec<T>) -> Self {
-        Self { data, index: 0 }
-    }
     pub fn resize(&mut self, size: usize, initial_value: T) {
-        self.data.resize(size, initial_value);
-        if self.data.len() > self.index {
+        let mut new_data = vec![initial_value; size];
+        // Copy existing data, up to the smaller of the old and new sizes.
+        let len = std::cmp::min(self.data.len(), size);
+
+        new_data[..len].clone_from_slice(&self.data[..len]);
+
+        self.data = new_data.into_boxed_slice();
+
+        if self.data.len() <= self.index {
             self.index = self.data.len() - 1;
         }
     }
@@ -72,7 +80,7 @@ impl<T: std::default::Default + Clone> Ring<T> {
 
     /// Mutably access an element by absolute index (circularly).
     pub fn get_mut(&mut self, idx: usize) -> &mut T {
-        let len = &self.data.len();
+        let len = self.data.len();
         &mut self.data[idx % len]
     }
 
@@ -92,19 +100,27 @@ impl<T: std::default::Default + Clone> Ring<T> {
     }
 
     pub fn as_mut_ptr(&mut self) -> *mut Ring<T> {
+        self as *mut Ring<T>
+    }
+
+    pub fn as_mut_ref(&mut self) -> &mut Ring<T> {
         self
     }
 
-    pub fn as_mut_ref(&self) -> *const () {
-        self as *const Ring<T> as *const ()
+    pub fn as_ref(&self) -> &Ring<T> {
+        self
     }
 
-    pub fn as_ptr(&self) -> *const () {
-        self as *const Ring<T> as *const ()
+    pub fn as_ptr(&self) -> *const Ring<T> {
+        self as *const Ring<T>
     }
 
     pub fn as_slice(&self) -> &[T] {
-        self.data.as_slice()
+        &self.data
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        &mut self.data
     }
 
     pub fn iter(&self) -> RingIterator<T> {
@@ -120,7 +136,7 @@ impl<T: std::default::Default + Clone> Ring<T> {
 }
 
 /// Implement `Index` for read-only access using square brackets.
-impl<T: std::default::Default + Clone> Index<usize> for Ring<T> {
+impl<T: Default + Clone> Index<usize> for Ring<T> {
     type Output = T;
 
     fn index(&self, idx: usize) -> &Self::Output {
@@ -129,7 +145,7 @@ impl<T: std::default::Default + Clone> Index<usize> for Ring<T> {
 }
 
 /// Implement `IndexMut` for mutable access using square brackets.
-impl<T: std::default::Default + Clone> IndexMut<usize> for Ring<T> {
+impl<T: Default + Clone> IndexMut<usize> for Ring<T> {
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
         self.get_mut(idx)
     }
@@ -141,7 +157,7 @@ pub struct RingIterator<'a, T: Default + Clone> {
     position: usize,
 }
 
-impl<'a, T: std::default::Default + Clone> IntoIterator for &'a Ring<T> {
+impl<'a, T: Default + Clone> IntoIterator for &'a Ring<T> {
     type Item = &'a T;
     type IntoIter = RingIterator<'a, T>;
 
@@ -153,7 +169,7 @@ impl<'a, T: std::default::Default + Clone> IntoIterator for &'a Ring<T> {
     }
 }
 
-impl<'a, T: std::default::Default + Clone> Iterator for RingIterator<'a, T> {
+impl<'a, T: Default + Clone> Iterator for RingIterator<'a, T> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -167,12 +183,11 @@ impl<'a, T: std::default::Default + Clone> Iterator for RingIterator<'a, T> {
     }
 }
 
-impl<'a, T: std::default::Default + Clone> FromIterator<T> for Ring<T> {
+impl<T: Default + Clone> FromIterator<T> for Ring<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        let mut data = Vec::new();
-        for item in iter {
-            data.push(item);
-        }
+        let data = iter.into_iter().collect::<Vec<_>>().into_boxed_slice();
         Self { data, index: 0 }
     }
 }
+
+// type RingHandle<T> = std::rc::Rc<Ring<T>>;

@@ -53,7 +53,8 @@ impl Renderer {
 
     #[cold]
     #[optimize(size)]
-    pub fn create_compute_pipeline(
+    // descriptors in extra_dynamic_layout are going to set 1, all others are going to set 0
+    pub fn create_compute_pipe(
         &self,
         pipe: &mut ComputePipe,
         extra_dynamic_layout: Option<vk::DescriptorSetLayout>,
@@ -150,7 +151,8 @@ impl Renderer {
 
     #[cold]
     #[optimize(size)]
-    pub fn create_raster_pipeline(
+    // descriptors in extra_dynamic_layout are going to set 1, all others are going to set 0
+    pub fn create_raster_pipe(
         &self,
         pipe: &mut RasterPipe,
         extra_dynamic_layout: Option<vk::DescriptorSetLayout>,
@@ -315,7 +317,7 @@ impl Renderer {
             .enumerate()
             .map(|(i, desc)| vk::VertexInputAttributeDescription {
                 location: i as u32,
-                binding: 0,
+                binding: desc.binding,
                 format: desc.format,
                 offset: desc.offset as u32,
             })
