@@ -110,13 +110,16 @@ impl Renderer {
     }
 
     // creates a GPU buffer and copies elements into it
+    // does buffer_usage |= TRANSFER_DST automatically
     #[cold]
     #[optimize(size)]
-    pub fn create_elem_buffer<T>(
+    pub fn create_and_upload_buffer<T>(
         &mut self,
         elements: &[T],
-        buffer_usage: vk::BufferUsageFlags,
+        mut buffer_usage: vk::BufferUsageFlags,
     ) -> Buffer {
+        buffer_usage |= vk::BufferUsageFlags::TRANSFER_DST;
+
         let count = elements.len();
         let size = std::mem::size_of_val(elements);
         let buffer = self.create_buffer(
