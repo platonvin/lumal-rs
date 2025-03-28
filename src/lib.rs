@@ -20,14 +20,22 @@ pub mod samplers;
 use anyhow::{anyhow, Ok, Result};
 use ring::*;
 
-use std::ffi::CStr;
-use std::mem::{size_of, size_of_val};
-use std::os::raw::c_void;
 use std::process::exit;
+use std::{any::type_name, os::raw::c_void};
+use std::{
+    any::Any,
+    mem::{size_of, size_of_val},
+};
+use std::{any::TypeId, ffi::CStr};
 use std::{collections::HashSet, default};
 use vulkanalia::{
     bytecode::Bytecode,
     loader::{LibloadingLoader, LIBRARY},
+    vk::{
+        DebugMarkerObjectNameInfoEXT, DebugReportObjectTypeEXT, DebugUtilsObjectNameInfoEXT,
+        DescriptorSet, DescriptorSetLayout, ExtDebugMarkerExtension, ImageView,
+        PFN_vkSetDebugUtilsObjectNameEXT, Pipeline,
+    },
 };
 use vulkanalia::{prelude::v1_3::*, vk::Extent3D};
 use vulkanalia::{vk::ImageAspectFlags, Version};
@@ -467,9 +475,9 @@ impl Renderer {
     #[optimize(size)]
     unsafe fn destroy_swapchain(&self) {
         self.vulkan_data
-            .swapchain_image_views
+            .swapchain_images
             .iter()
-            .for_each(|v| self.device.destroy_image_view(*v, None));
+            .for_each(|v| self.device.destroy_image_view(v.view, None));
         self.device.destroy_swapchain_khr(self.vulkan_data.swapchain, None);
     }
 
@@ -787,6 +795,113 @@ impl Renderer {
             self.should_recreate = false;
         };
     }
+
+    pub fn name_var(&self, o_type: vk::ObjectType, o: u64, o_name: &str) {
+        let name_info = DebugUtilsObjectNameInfoEXT {
+            // TODO: get rid of vulkanalia, trait get_s_type & get_type_name
+            object_type: o_type,
+            object_handle: o,
+            object_name: o_name.as_bytes().as_ptr() as *const i8,
+            ..Default::default()
+        };
+        unsafe {
+            vulkanalia::vk::ExtDebugUtilsExtension::set_debug_utils_object_name_ext(
+                &self.instance,
+                self.device.handle(),
+                &name_info,
+            );
+        }
+    }
+}
+
+#[rustfmt::skip]
+macro_rules! elif {
+    ($type_id:ident, $type_1:ident, $type_2:expr) => {
+        if $type_id == TypeId::of::<$type_1>() {
+            return Some($type_2);
+        }
+    };
+}
+
+#[rustfmt::skip]
+pub fn get_vulkan_object_type<T: Any>(_object: &T) -> Option<vk::ObjectType> {
+    println!("TYPE NAME {}", type_name::<T>());
+    let type_id = TypeId::of::<T>();
+
+    // use vk::ObjectType::*;
+    use vk::Buffer;
+    use vk::*;
+
+    elif!(type_id, Instance, vk::ObjectType::INSTANCE);
+    elif!(type_id, PhysicalDevice, vk::ObjectType::PHYSICAL_DEVICE);
+    elif!(type_id, Device, vk::ObjectType::DEVICE);
+    elif!(type_id, Queue, vk::ObjectType::QUEUE);
+    elif!(type_id, Semaphore, vk::ObjectType::SEMAPHORE);
+    elif!(type_id, CommandBuffer, vk::ObjectType::COMMAND_BUFFER);
+    elif!(type_id, Fence, vk::ObjectType::FENCE);
+    elif!(type_id, DeviceMemory, vk::ObjectType::DEVICE_MEMORY);
+    elif!(type_id, Buffer, vk::ObjectType::BUFFER);
+    elif!(type_id, Image, vk::ObjectType::IMAGE);
+    elif!(type_id, Event, vk::ObjectType::EVENT);
+    elif!(type_id, QueryPool, vk::ObjectType::QUERY_POOL);
+    elif!(type_id, BufferView, vk::ObjectType::BUFFER_VIEW);
+    elif!(type_id, ImageView, vk::ObjectType::IMAGE_VIEW);
+    elif!(type_id, ShaderModule, vk::ObjectType::SHADER_MODULE);
+    elif!(type_id, PipelineLayout, vk::ObjectType::PIPELINE_LAYOUT);
+    elif!(type_id, RenderPass, vk::ObjectType::RENDER_PASS);
+    elif!(type_id, Pipeline, vk::ObjectType::PIPELINE);
+    elif!(type_id, DescriptorSetLayout, vk::ObjectType::DESCRIPTOR_SET_LAYOUT);
+    elif!(type_id, Sampler, vk::ObjectType::SAMPLER);
+    elif!(type_id, DescriptorPool, vk::ObjectType::DESCRIPTOR_POOL);
+    elif!(type_id, DescriptorSet, vk::ObjectType::DESCRIPTOR_SET);
+    elif!(type_id, Framebuffer, vk::ObjectType::FRAMEBUFFER);
+    elif!(type_id, CommandPool, vk::ObjectType::COMMAND_POOL);
+    elif!(type_id, SurfaceKHR, vk::ObjectType::SURFACE_KHR);
+    elif!(type_id, SwapchainKHR, vk::ObjectType::SWAPCHAIN_KHR);
+    elif!(type_id, DebugUtilsMessengerEXT, vk::ObjectType::DEBUG_UTILS_MESSENGER_EXT);
+
+    return Some(vk::ObjectType::UNKNOWN);
+}
+
+#[macro_export]
+macro_rules! set_debug_name {
+    ($lumal:expr, $variable:expr, $debug_name:expr) => {{
+        if let Some(debug_name) = $debug_name {
+            let object_handle = $variable.as_raw();
+            // dbg!(std::any::type_name::<$variable>());
+            let object_type_option = $crate::get_vulkan_object_type($variable); // Call the function
+
+            if let Some(object_type_vk) = object_type_option {
+                let object_type_debug_report = object_type_vk;
+                $lumal.name_var(object_type_debug_report, object_handle, debug_name);
+            } else {
+                // WTF this is printed EVERYWHERE
+                // eprintln!(
+                //     " Warning: Could not automatically determine ObjectType for {} ",
+                //     stringify!($variable)
+                // );
+            }
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! set_debug_names {
+    ($renderer:expr, $base_name:expr, $( ($object:expr, $suffix:expr) ),*) => {
+        #[cfg(feature = "debug_validation_names")]
+        {
+            if let Some(name) = $base_name {
+                $(
+                    let debug_name = format!("{}{}\0", name, $suffix);
+                    let object_handle = $object.as_raw();
+
+                    if let Some(object_type_vk) = $crate::get_vulkan_object_type($object); {
+                        $renderer.name_var(object_type_vk, object_handle, &debug_name);
+                    }
+                )*
+            }
+        }
+    };
 }
 
 /// The Vulkan handles and associated properties used by an example Vulkan app.
@@ -804,7 +919,7 @@ pub struct VulkanData {
     pub swapchain_extent: vk::Extent2D,
     pub swapchain: vk::SwapchainKHR,
     pub swapchain_images: Ring<crate::Image>,
-    pub swapchain_image_views: Ring<vk::ImageView>,
+    // pub swapchain_image_views: Ring<vk::ImageView>,
     // Command Pool
     pub command_pool: vk::CommandPool,
     // Sync Objects
@@ -1036,7 +1151,8 @@ unsafe fn create_swapchain(
             .get_swapchain_images_khr(data.swapchain)
             .unwrap()
             .iter()
-            .map(|vk_img| {
+            .enumerate()
+            .map(|(i, vk_img)| {
                 let components = vk::ComponentMapping::builder()
                     .r(vk::ComponentSwizzle::IDENTITY)
                     .g(vk::ComponentSwizzle::IDENTITY)
@@ -1058,6 +1174,31 @@ unsafe fn create_swapchain(
                     .subresource_range(subresource_range);
 
                 let view = device.create_image_view(&info, None).unwrap();
+
+                // manually give swapchain image views debug names
+                #[cfg(feature = "debug_validation_names")]
+                {
+                    let debug_name = format!("Swapchain Image View {}\0", i);
+                    let object_handle = (&view).as_raw();
+                    let object_type_option = crate::get_vulkan_object_type((&view));
+                    if let Some(object_type_vk) = object_type_option {
+                        let object_type_debug_report = object_type_vk;
+                        let name_info = DebugUtilsObjectNameInfoEXT {
+                            // TODO: get rid of vulkanalia, trait get_s_type & get_type_name
+                            object_type: object_type_vk,
+                            object_handle: object_handle,
+                            object_name: debug_name.as_bytes().as_ptr() as *const i8,
+                            ..Default::default()
+                        };
+                        unsafe {
+                            vulkanalia::vk::ExtDebugUtilsExtension::set_debug_utils_object_name_ext(
+                                instance,
+                                device.handle(),
+                                &name_info,
+                            );
+                        }
+                    }
+                };
 
                 Image {
                     image: *vk_img,

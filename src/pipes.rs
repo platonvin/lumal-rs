@@ -4,8 +4,11 @@ use crate::*;
 use descriptors::*;
 
 use std::{error, ffi::CStr, ptr::slice_from_raw_parts};
-use vulkanalia::prelude::v1_3::*;
-use vulkanalia::vk::{self, Cast, CompareOp, DeviceV1_3, DynamicState, StencilOp};
+use vulkanalia::vk::{
+    self, Cast, CompareOp, DebugMarkerObjectNameInfoEXT, DebugReportObjectTypeEXT, DeviceV1_3,
+    DynamicState, ExtDebugMarkerExtension, StencilOp,
+};
+use vulkanalia::{prelude::v1_3::*, vk::EXT_DEBUG_UTILS_EXTENSION};
 
 const PREFIXES: &[&str] = &["../shaders/", "../../shaders/", "shaders/compiled/"];
 
@@ -58,21 +61,20 @@ impl Renderer {
         &self,
         pipe: &mut ComputePipe,
         extra_dynamic_layout: Option<vk::DescriptorSetLayout>,
-        src: String,
+        spirv_code: &[u8],
         push_size: u32,
         create_flags: vk::PipelineCreateFlags,
+        #[cfg(feature = "debug_validation_names")] debug_name: Option<&str>,
     ) {
-        assert!(!src.is_empty());
-
-        // Read the shader source file
-        // let comp_shader_code = read_file(src);
+        assert!(!spirv_code.is_empty());
 
         // Shader stage info
         let (module, comp_shader_stage_info) = {
-            let resolved_path =
-                Self::resolve_shader_path(PREFIXES, src).expect("Failed to resolve shader path");
             // Create Vulkan compute shader module
-            let module = Self::load_shader_module(&self.device, &resolved_path);
+            let module = Self::load_shader_module(&self.device, &spirv_code);
+
+            set_debug_names!(self, debug_name, (&module, "Shader Module"));
+
             assert!(module != vk::ShaderModule::null());
 
             (
@@ -147,6 +149,13 @@ impl Renderer {
         // Update the pipeline
         pipe.line = line;
         pipe.line_layout = line_layout;
+
+        set_debug_names!(
+            self,
+            debug_name,
+            (&pipe.line, "Pipeline"),
+            (&pipe.line_layout, "Pipeline Layout")
+        );
     }
 
     #[cold]
@@ -168,6 +177,7 @@ impl Renderer {
         depth_compare_op: vk::CompareOp,
         culling: vk::CullModeFlags,
         stencil: vk::StencilOpState,
+        debug_name: Option<&str>,
     ) {
         assert!(pipe.render_pass != vk::RenderPass::null());
         // Create Vulkan shader stages
@@ -176,9 +186,7 @@ impl Renderer {
         let pipeline_shader_stages: Vec<vk::PipelineShaderStageCreateInfo> = shader_stages
             .iter()
             .map(|stage| {
-                let resolved_path = Self::resolve_shader_path(PREFIXES, stage.src.clone())
-                    .expect("Failed to resolve shader path");
-                let module = Self::load_shader_module(&self.device, &resolved_path);
+                let module = Self::load_shader_module(&self.device, &stage.spirv_code);
                 modules_to_destroy.push(module);
 
                 vk::PipelineShaderStageCreateInfo {
@@ -435,6 +443,14 @@ impl Renderer {
         // dots never meant anything]
         pipe.line = pipeline;
         pipe.line_layout = pipeline_layout;
+
+        // give debug names to vulkan objects
+        set_debug_names!(
+            self,
+            debug_name,
+            (&pipe.line, "Pipeline"),
+            (&pipe.line_layout, "Pipeline Layout")
+        );
     }
 
     #[cold]
@@ -480,14 +496,7 @@ impl Renderer {
     // Helper function for loading SPIR-V shader modules
     #[cold]
     #[optimize(size)]
-    fn load_shader_module(device: &Device, path: &std::path::Path) -> vk::ShaderModule {
-        use std::fs::File;
-        use std::io::Read;
-
-        let mut file = File::open(path).expect("Failed to open shader file");
-        let mut spirv_code = Vec::new();
-        file.read_to_end(&mut spirv_code).expect("Failed to read shader file");
-
+    fn load_shader_module(device: &Device, spirv_code: &[u8]) -> vk::ShaderModule {
         let create_info = vk::ShaderModuleCreateInfo {
             s_type: vk::StructureType::SHADER_MODULE_CREATE_INFO,
             next: std::ptr::null(),
@@ -495,7 +504,7 @@ impl Renderer {
             code_size: spirv_code.len(),
             code: spirv_code.as_ptr() as *const u32,
         };
-
+        atrace!();
         unsafe {
             device
                 .create_shader_module(&create_info, None)

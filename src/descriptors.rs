@@ -1,9 +1,10 @@
-use crate::Renderer;
 use crate::{
-    ring::Ring, Buffer, DescriptorCounter, Image, LumalSettings, RasterPipe, MAX_FRAMES_IN_FLIGHT,
+    ring::Ring, set_debug_names, Buffer, DescriptorCounter, Image, LumalSettings, RasterPipe,
+    MAX_FRAMES_IN_FLIGHT,
 };
+use crate::{set_debug_name, Renderer};
 use anyhow::*;
-use std::cell::UnsafeCell;
+use std::{any::TypeId, cell::UnsafeCell};
 use std::{option, ptr::null};
 use vulkanalia::vk::{self, DeviceV1_3};
 
@@ -105,9 +106,9 @@ pub enum RelativeDescriptorPos {
 }
 
 #[derive(Clone, Debug)]
-pub struct ShaderStage {
-    pub src: String,
+pub struct ShaderStage<'a> {
     pub stage: vk::ShaderStageFlags,
+    pub spirv_code: &'a [u8],
 }
 
 #[derive(Clone, Debug)]
@@ -164,6 +165,7 @@ impl Renderer {
         descriptor_infos: &[ShortDescriptorInfo],
         layout: &mut vk::DescriptorSetLayout,
         flags: vk::DescriptorSetLayoutCreateFlags,
+        #[cfg(feature = "debug_validation_names")] debug_name: Option<&str>,
     ) {
         let bindings: Vec<vk::DescriptorSetLayoutBinding> = descriptor_infos
             .iter()
@@ -225,6 +227,9 @@ impl Renderer {
                 .create_descriptor_set_layout(&layout_info, None)
                 .expect("Failed to create descriptor set layout")
         };
+
+        #[cfg(feature = "debug_validation_names")]
+        set_debug_names!(self, debug_name, (layout, " Layout"));
     }
 
     #[cold]
@@ -304,6 +309,7 @@ impl Renderer {
         descriptions: &[DescriptorInfo],
         default_stages: vk::ShaderStageFlags,
         create_flags: vk::DescriptorSetLayoutCreateFlags,
+        #[cfg(feature = "debug_validation_names")] debug_name: Option<&str>,
     ) {
         if *dset_layout == vk::DescriptorSetLayout::null() {
             let descriptor_infos: Vec<ShortDescriptorInfo> = descriptions
@@ -319,7 +325,13 @@ impl Renderer {
                 .collect();
             unsafe {
                 // actually create layout and write it to ptr
-                self.create_descriptor_set_layout(&descriptor_infos, dset_layout, create_flags);
+                self.create_descriptor_set_layout(
+                    &descriptor_infos,
+                    dset_layout,
+                    create_flags,
+                    #[cfg(feature = "debug_validation_names")]
+                    debug_name,
+                );
             }
         }
 
@@ -339,6 +351,7 @@ impl Renderer {
         descriptor_sets: &mut Ring<vk::DescriptorSet>,
         descriptions: &[DescriptorInfo],
         stages: vk::ShaderStageFlags,
+        #[cfg(feature = "debug_validation_names")] debug_name: Option<&str>,
     ) {
         *descriptor_sets = Ring::new(MAX_FRAMES_IN_FLIGHT, vk::DescriptorSet::null());
         let dset_layouts = [*dset_layout; MAX_FRAMES_IN_FLIGHT];
@@ -433,6 +446,7 @@ impl Renderer {
         descriptions: &[DescriptorInfo],
         default_stages: vk::ShaderStageFlags,
         create_flags: vk::DescriptorSetLayoutCreateFlags,
+        #[cfg(feature = "debug_validation_names")] debug_name: Option<&str>,
     ) {
         // actually setup descriptor
         unsafe {
@@ -444,6 +458,8 @@ impl Renderer {
                 descriptor_sets,
                 descriptions,
                 default_stages,
+                #[cfg(feature = "debug_validation_names")]
+                debug_name,
             );
         }
     }

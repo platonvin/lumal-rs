@@ -3,6 +3,15 @@
     version = "0.1.0"
     edition = "2021"
 
+[features]
+    default = []
+    validation_layers = []
+    debug_validation_names = ["validation_layers"]
+
+[profile.dev]
+    #enable debug names for validation_layers use in Lum
+    features = ["debug_validation_names"]
+
 [dependencies]
     # funny thing is that vulkanalia-vma does not in fact support vulkanalia 0.26.0
     vulkanalia = { version = "0.25.0", features = [
@@ -14,7 +23,7 @@
     winit = "0.30.8"
     anyhow = "1"
     num = "0.4"
-paste = "1.0.15"
+    paste = "1.0.15"
 
 [lib]
     name = "lumal"

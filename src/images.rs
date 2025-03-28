@@ -1,8 +1,8 @@
-use crate::Image;
 use crate::{ring::Ring, Renderer}; // Import the LumalRenderer struct
+use crate::{set_debug_names, Image};
 use anyhow::*;
 use std::ptr::{self};
-use vulkanalia::vk::{self, DeviceV1_0};
+use vulkanalia::vk::{self, DeviceV1_0, Handle};
 use vulkanalia_vma::Alloc;
 use vulkanalia_vma::{self as vma};
 
@@ -20,6 +20,7 @@ impl Renderer {
         extent: vk::Extent3D,
         mipmaps: u32,
         sample_count: vk::SampleCountFlags,
+        #[cfg(feature = "debug_validation_names")] debug_name: Option<&str>,
     ) -> Result<Image> {
         let image_aspect = aspect;
         let image_format = format;
@@ -96,9 +97,11 @@ impl Renderer {
                 .map(|mip| {
                     view_info.subresource_range.base_mip_level = mip;
                     view_info.subresource_range.level_count = 1;
-                    unsafe { self.device.create_image_view(&view_info, None) }
+                    let view = unsafe { self.device.create_image_view(&view_info, None).unwrap() };
+                    set_debug_names!(self, Some("Stencil View for DS"), (&view, "Image View"));
+                    view
                 })
-                .collect::<Result<Vec<_>, _>>()?;
+                .collect::<Vec<_>>();
         }
 
         let image = Image {
@@ -118,6 +121,13 @@ impl Renderer {
             vk::ImageLayout::GENERAL,
         );
 
+        set_debug_names!(
+            self,
+            debug_name,
+            (&image.image, "Image"),
+            (&image.view, "Image View")
+        );
+
         Ok(image)
     }
     #[cold]
@@ -134,6 +144,7 @@ impl Renderer {
         extent: vk::Extent3D,
         mipmaps: u32,
         sample_count: vk::SampleCountFlags,
+        #[cfg(feature = "debug_validation_names")] debug_name: Option<&str>,
     ) -> Result<Ring<Image>> {
         // Create a vector to hold the images.
         let mut images = Vec::with_capacity(size);
@@ -150,6 +161,8 @@ impl Renderer {
                 extent,
                 mipmaps,
                 sample_count,
+                #[cfg(feature = "debug_validation_names")]
+                debug_name,
             )?;
             images.push(image);
         }
