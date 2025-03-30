@@ -17,9 +17,9 @@ pub mod ring; // circular Vec
 pub mod rpass;
 pub mod samplers;
 
-use anyhow::{anyhow, Ok, Result};
 use ring::*;
 
+use core::error;
 use std::process::exit;
 use std::{any::type_name, os::raw::c_void};
 use std::{
@@ -319,7 +319,7 @@ pub struct Renderer {
 impl Renderer {
     #[cold]
     #[optimize(size)]
-    pub fn create(settings: &LumalSettings, window: &Window) -> Result<Renderer> {
+    pub fn create(settings: &LumalSettings, window: &Window) -> Renderer {
         println!("Starting app.");
 
         let mut vulkan_data = VulkanData {
@@ -331,29 +331,30 @@ impl Renderer {
             println!("Validation layers requested.");
         }
         unsafe {
-            let loader = LibloadingLoader::new(LIBRARY)?;
-            let entry = Entry::new(loader).map_err(|b| anyhow!("{}", b))?;
-            let instance = Renderer::create_instance(window, &entry, &mut vulkan_data)?;
-            vulkan_data.surface = vulkanalia::window::create_surface(&instance, &window, &window)?;
-            pick_physical_device(&instance, &mut vulkan_data)?;
-            let device = create_logical_device(&entry, &instance, &mut vulkan_data)?;
+            let loader = LibloadingLoader::new(LIBRARY).unwrap();
+            let entry = Entry::new(loader).unwrap();
+            let instance = Renderer::create_instance(window, &entry, &mut vulkan_data);
+            vulkan_data.surface =
+                vulkanalia::window::create_surface(&instance, &window, &window).unwrap();
+            pick_physical_device(&instance, &mut vulkan_data);
+            let device = create_logical_device(&entry, &instance, &mut vulkan_data);
 
             let allocator_options =
                 vma::AllocatorOptions::new(&instance, &device, vulkan_data.physical_device);
-            let allocator = vma::Allocator::new(&allocator_options)?;
+            let allocator = vma::Allocator::new(&allocator_options);
 
-            create_swapchain(window, &instance, &device, &mut vulkan_data)?;
-            // create_swapchain_image_views(&device, &mut vulkan_data)?;
+            create_swapchain(window, &instance, &device, &mut vulkan_data);
+            // create_swapchain_image_views(&device, &mut vulkan_data);
             // these are handled by downstream user. Makes no sense to hardcode pipes in renderer
-            // example.create_render_pass(&device, &mut data)?;
-            // example.create_pipeline(&device, &mut data)?;
-            // create_framebuffers(&device, &mut data)?;
-            // create_command_buffers(&device, &mut vulkan_data)?;
-            create_command_pool(&instance, &device, &mut vulkan_data)?;
-            create_sync_objects(&device, &mut vulkan_data)?;
+            // example.create_render_pass(&device, &mut data);
+            // example.create_pipeline(&device, &mut data);
+            // create_framebuffers(&device, &mut data);
+            // create_command_buffers(&device, &mut vulkan_data);
+            create_command_pool(&instance, &device, &mut vulkan_data);
+            create_sync_objects(&device, &mut vulkan_data);
 
-            Ok(Renderer {
-                allocator: Some(allocator),
+            Renderer {
+                allocator: Some(allocator.unwrap()),
                 vulkan_data,
                 entry,
                 instance,
@@ -369,7 +370,7 @@ impl Renderer {
                 extra_command_buffers: Default::default(),
                 buffer_deletion_queue: vec![],
                 image_deletion_queue: vec![],
-            })
+            }
         }
     }
 
@@ -379,7 +380,7 @@ impl Renderer {
         window: &Window,
         entry: &Entry,
         data: &mut VulkanData,
-    ) -> Result<Instance> {
+    ) -> Instance {
         // Application Info
 
         let application_info = vk::ApplicationInfo::builder()
@@ -392,13 +393,14 @@ impl Renderer {
         // Layers
 
         let available_layers = entry
-            .enumerate_instance_layer_properties()?
+            .enumerate_instance_layer_properties()
+            .unwrap()
             .iter()
             .map(|l| l.layer_name)
             .collect::<HashSet<_>>();
 
         if data.validation && !available_layers.contains(&VALIDATION_LAYER) {
-            return Err(anyhow!("Validation layers requested but not supported."));
+            return panic!("Validation layers requested but not supported");
         }
 
         let mut layers = if (data.validation) {
@@ -419,14 +421,15 @@ impl Renderer {
             .collect::<Vec<_>>();
 
         // Required by Vulkan SDK on macOS since 1.3.216.
-        let flags = if cfg!(target_os = "macos") && entry.version()? >= PORTABILITY_MACOS_VERSION {
-            println!("Enabling extensions for macOS portability.");
-            extensions.push(vk::KHR_GET_PHYSICAL_DEVICE_PROPERTIES2_EXTENSION.name.as_ptr());
-            extensions.push(vk::KHR_PORTABILITY_ENUMERATION_EXTENSION.name.as_ptr());
-            vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR
-        } else {
-            vk::InstanceCreateFlags::empty()
-        };
+        let flags =
+            if cfg!(target_os = "macos") && entry.version().unwrap() >= PORTABILITY_MACOS_VERSION {
+                println!("Enabling extensions for macOS portability.");
+                extensions.push(vk::KHR_GET_PHYSICAL_DEVICE_PROPERTIES2_EXTENSION.name.as_ptr());
+                extensions.push(vk::KHR_PORTABILITY_ENUMERATION_EXTENSION.name.as_ptr());
+                vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR
+            } else {
+                vk::InstanceCreateFlags::empty()
+            };
 
         if data.validation {
             extensions.push(vk::EXT_DEBUG_UTILS_EXTENSION.name.as_ptr());
@@ -453,7 +456,7 @@ impl Renderer {
             info = info.push_next(&mut debug_info);
         }
 
-        Ok(entry.create_instance(&info, None)?)
+        entry.create_instance(&info, None).unwrap()
     }
     /// buffers, images, pipelines - everything created manually should be destroyed manually before this funcall
     pub unsafe fn destroy(&mut self) {
@@ -782,7 +785,7 @@ impl Renderer {
 
             self.device.device_wait_idle().unwrap();
 
-            create_swapchain(window, &self.instance, &self.device, &mut self.vulkan_data).unwrap();
+            create_swapchain(window, &self.instance, &self.device, &mut self.vulkan_data);
             // create_swapchain_image_views(&self.device, &mut self.vulkan_data).unwrap();
             // create_command_pool(&self.instance, &self.device, &mut self.vulkan_data).unwrap();
 
@@ -895,7 +898,7 @@ macro_rules! set_debug_names {
                     let debug_name = format!("{}{}\0", name, $suffix);
                     let object_handle = $object.as_raw();
 
-                    if let Some(object_type_vk) = $crate::get_vulkan_object_type($object); {
+                    if let Some(object_type_vk) = $crate::get_vulkan_object_type($object) {
                         $renderer.name_var(object_type_vk, object_handle, &debug_name);
                     }
                 )*
@@ -955,8 +958,8 @@ extern "system" fn debug_callback(
 /// Picks a suitable physical device.
 #[cold]
 #[optimize(size)]
-unsafe fn pick_physical_device(instance: &Instance, data: &mut VulkanData) -> Result<()> {
-    for physical_device in instance.enumerate_physical_devices()? {
+unsafe fn pick_physical_device(instance: &Instance, data: &mut VulkanData) {
+    for physical_device in instance.enumerate_physical_devices().unwrap() {
         let properties = instance.get_physical_device_properties(physical_device);
 
         if let Err(error) = check_physical_device(instance, data, physical_device) {
@@ -967,11 +970,11 @@ unsafe fn pick_physical_device(instance: &Instance, data: &mut VulkanData) -> Re
         } else {
             println!("Selected physical device (`{}`).", properties.device_name);
             data.physical_device = physical_device;
-            return Ok(());
+            return;
         }
     }
 
-    Err(anyhow!("Failed to find suitable physical device."))
+    panic!("Failed to find suitable physical device")
 }
 
 /// Checks that a physical device is suitable.
@@ -981,17 +984,15 @@ unsafe fn check_physical_device(
     instance: &Instance,
     data: &VulkanData,
     physical_device: vk::PhysicalDevice,
-) -> Result<()> {
+) -> VkResult<()> {
     QueueFamilyIndices::get(instance, data, physical_device)?;
     check_physical_device_extensions(instance, physical_device)?;
-
     let support = SwapchainSupport::get(instance, data, physical_device)?;
     if support.formats.is_empty() || support.present_modes.is_empty() {
         // return Err(anyhow!(SuitabilityError("Insufficient swapchain support.")));
         println!("Insufficient swapchain support");
         exit(1);
     }
-
     Ok(())
 }
 
@@ -1001,7 +1002,7 @@ unsafe fn check_physical_device(
 unsafe fn check_physical_device_extensions(
     instance: &Instance,
     physical_device: vk::PhysicalDevice,
-) -> Result<()> {
+) -> VkResult<()> {
     let extensions = instance
         .enumerate_device_extension_properties(physical_device, None)?
         .iter()
@@ -1023,8 +1024,8 @@ unsafe fn create_logical_device(
     entry: &Entry,
     instance: &Instance,
     data: &mut VulkanData,
-) -> Result<Device> {
-    let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
+) -> Device {
+    let indices = QueueFamilyIndices::get(instance, data, data.physical_device).unwrap();
 
     let mut unique_indices = HashSet::new();
     unique_indices.insert(indices.graphics);
@@ -1049,7 +1050,7 @@ unsafe fn create_logical_device(
     let mut extensions = DEVICE_EXTENSIONS.iter().map(|n| n.as_ptr()).collect::<Vec<_>>();
 
     // Required by Vulkan SDK on macOS since 1.3.216.
-    if cfg!(target_os = "macos") && entry.version()? >= PORTABILITY_MACOS_VERSION {
+    if cfg!(target_os = "macos") && entry.version().unwrap() >= PORTABILITY_MACOS_VERSION {
         extensions.push(vk::KHR_PORTABILITY_SUBSET_EXTENSION.name.as_ptr());
     }
 
@@ -1084,12 +1085,12 @@ unsafe fn create_logical_device(
         .push_next(&mut features2)
         .build();
 
-    let device = instance.create_device(data.physical_device, &info, None)?;
+    let device = instance.create_device(data.physical_device, &info, None).unwrap();
 
     data.graphics_queue = device.get_device_queue(indices.graphics, 0);
     data.present_queue = device.get_device_queue(indices.present, 0);
 
-    Ok(device)
+    device
 }
 
 /// Creates a swapchain and swapchain images.
@@ -1100,26 +1101,20 @@ unsafe fn create_swapchain(
     instance: &Instance,
     device: &Device,
     data: &mut VulkanData,
-) -> Result<()> {
-    let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
-    let support = SwapchainSupport::get(instance, data, data.physical_device)?;
-
+) {
+    let indices = QueueFamilyIndices::get(instance, data, data.physical_device).unwrap();
+    let support = SwapchainSupport::get(instance, data, data.physical_device).unwrap();
     let surface_format = get_swapchain_surface_format(&support.formats);
     let present_mode = get_swapchain_present_mode(&support.present_modes);
     let extent = get_swapchain_extent(window, support.capabilities);
-
     data.swapchain_format = surface_format.format;
     data.swapchain_extent = extent;
-
-    // A max image count of 0 indicates that the surface has no upper limit on number of images.
     let max_image_count = if support.capabilities.max_image_count != 0 {
         support.capabilities.max_image_count
     } else {
         u32::MAX
     };
-
     let image_count = (support.capabilities.min_image_count + 1).min(max_image_count);
-
     let mut queue_family_indices = vec![];
     let image_sharing_mode = if indices.graphics != indices.present {
         queue_family_indices.push(indices.graphics);
@@ -1128,7 +1123,6 @@ unsafe fn create_swapchain(
     } else {
         vk::SharingMode::EXCLUSIVE
     };
-
     let info = vk::SwapchainCreateInfoKHR::builder()
         .surface(data.surface)
         .min_image_count(image_count)
@@ -1143,9 +1137,7 @@ unsafe fn create_swapchain(
         .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
         .present_mode(present_mode)
         .clipped(true);
-
-    data.swapchain = device.create_swapchain_khr(&info, None)?;
-
+    data.swapchain = device.create_swapchain_khr(&info, None).unwrap();
     data.swapchain_images = Ring::from_vec(
         device
             .get_swapchain_images_khr(data.swapchain)
@@ -1218,8 +1210,6 @@ unsafe fn create_swapchain(
             })
             .collect(),
     );
-
-    Ok(())
 }
 
 /// Gets a suitable swapchain surface format.
@@ -1277,39 +1267,29 @@ fn get_swapchain_extent(window: &Window, capabilities: vk::SurfaceCapabilitiesKH
 
 #[cold]
 #[optimize(size)]
-unsafe fn create_command_pool(
-    instance: &Instance,
-    device: &Device,
-    data: &mut VulkanData,
-) -> Result<()> {
-    let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
-
+unsafe fn create_command_pool(instance: &Instance, device: &Device, data: &mut VulkanData) {
+    let indices = QueueFamilyIndices::get(instance, data, data.physical_device).unwrap();
     let info = vk::CommandPoolCreateInfo::builder()
         .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
         .queue_family_index(indices.graphics);
-
-    data.command_pool = device.create_command_pool(&info, None)?;
-
-    Ok(())
+    data.command_pool = device.create_command_pool(&info, None).unwrap();
 }
 
 #[cold]
 #[optimize(size)]
-unsafe fn create_sync_objects(device: &Device, data: &mut VulkanData) -> Result<()> {
+unsafe fn create_sync_objects(device: &Device, data: &mut VulkanData) {
     let semaphore_info = vk::SemaphoreCreateInfo::builder();
     let fence_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
-
     data.image_available_semaphores.resize(MAX_FRAMES_IN_FLIGHT, Default::default());
     data.render_finished_semaphores.resize(MAX_FRAMES_IN_FLIGHT, Default::default());
     data.in_flight_fences.resize(MAX_FRAMES_IN_FLIGHT, Default::default());
-
     for i in 0..MAX_FRAMES_IN_FLIGHT {
-        data.image_available_semaphores[i] = (device.create_semaphore(&semaphore_info, None)?);
-        data.render_finished_semaphores[i] = (device.create_semaphore(&semaphore_info, None)?);
-        data.in_flight_fences[i] = (device.create_fence(&fence_info, None)?);
+        data.image_available_semaphores[i] =
+            (device.create_semaphore(&semaphore_info, None).unwrap());
+        data.render_finished_semaphores[i] =
+            (device.create_semaphore(&semaphore_info, None).unwrap());
+        data.in_flight_fences[i] = (device.create_fence(&fence_info, None).unwrap());
     }
-
-    Ok(())
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1325,7 +1305,7 @@ impl QueueFamilyIndices {
         instance: &Instance,
         data: &VulkanData,
         physical_device: vk::PhysicalDevice,
-    ) -> Result<Self> {
+    ) -> VkResult<Self> {
         let properties = instance.get_physical_device_queue_family_properties(physical_device);
 
         let graphics = properties
@@ -1368,8 +1348,8 @@ impl SwapchainSupport {
         instance: &Instance,
         data: &VulkanData,
         physical_device: vk::PhysicalDevice,
-    ) -> Result<Self> {
-        Ok(Self {
+    ) -> VkResult<SwapchainSupport> {
+        Ok(SwapchainSupport {
             capabilities: instance
                 .get_physical_device_surface_capabilities_khr(physical_device, data.surface)?,
             formats: instance

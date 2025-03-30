@@ -504,7 +504,6 @@ impl Renderer {
             code_size: spirv_code.len(),
             code: spirv_code.as_ptr() as *const u32,
         };
-        atrace!();
         unsafe {
             device
                 .create_shader_module(&create_info, None)

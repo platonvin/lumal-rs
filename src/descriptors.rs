@@ -3,7 +3,6 @@ use crate::{
     MAX_FRAMES_IN_FLIGHT,
 };
 use crate::{set_debug_name, Renderer};
-use anyhow::*;
 use std::{any::TypeId, cell::UnsafeCell};
 use std::{option, ptr::null};
 use vulkanalia::vk::{self, DeviceV1_3};
@@ -234,7 +233,7 @@ impl Renderer {
 
     #[cold]
     #[optimize(size)]
-    pub unsafe fn create_descriptor_pool(&self) -> Result<vk::DescriptorPool> {
+    pub unsafe fn create_descriptor_pool(&self) -> vk::DescriptorPool {
         let mut pool_sizes = Vec::new();
 
         macro_rules! make_descriptor_type {
@@ -267,7 +266,7 @@ impl Renderer {
             ..Default::default()
         };
 
-        Ok(self.device.create_descriptor_pool(&pool_info, None)?)
+        self.device.create_descriptor_pool(&pool_info, None).unwrap()
     }
 
     #[cold]
@@ -434,7 +433,7 @@ impl Renderer {
     #[optimize(size)]
     pub fn flush_descriptor_setup(&mut self) {
         // (actually) create Vulkan descriptor pool
-        self.vulkan_data.descriptor_pool = unsafe { self.create_descriptor_pool() }.unwrap();
+        self.vulkan_data.descriptor_pool = unsafe { self.create_descriptor_pool() };
     }
 
     #[cold]

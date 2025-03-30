@@ -1,5 +1,4 @@
 use crate::{ring::Ring, Buffer, Renderer}; // Import the LumalRenderer struct
-use anyhow::*;
 use std::ptr::{self, copy_nonoverlapping};
 use vulkanalia::vk::{self, BufferUsageFlags};
 
@@ -71,7 +70,7 @@ impl Renderer {
         usage: vk::BufferUsageFlags,
         biffer_size: usize,
         host: bool,
-    ) -> Result<Ring<Buffer>> {
+    ) -> Ring<Buffer> {
         // Create a vector to hold the images.
         let mut buffers = Vec::with_capacity(ring_size);
 
@@ -82,10 +81,10 @@ impl Renderer {
         }
 
         // Return the Ring initialized with the images.
-        Ok(Ring {
+        Ring {
             data: buffers.into_boxed_slice(),
             index: 0,
-        })
+        }
     }
 
     #[cold]

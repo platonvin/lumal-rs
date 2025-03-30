@@ -7,7 +7,6 @@ use crate::{
     ring::Ring,
     trace, Buffer, DescriptorCounter, Image, LumalSettings, RasterPipe, RenderPass,
 };
-use anyhow::*;
 use vulkanalia::vk::{self, DeviceV1_3, Framebuffer};
 
 use crate::function;
@@ -253,10 +252,7 @@ impl Renderer {
         height: u32,
     ) -> Ring<vk::Framebuffer> {
         // Calculate Least Common Multiple (LCM) of the sizes of the image view rings
-        let lcm = imgs4views
-            .iter()
-            .map(|v| (unsafe { (**v).clone() }).len())
-            .fold(1, num::integer::lcm);
+        let lcm = imgs4views.iter().map(|v| (unsafe { (**v).clone() }).len()).fold(1, lcm_custom);
         assert!(lcm != 0);
 
         let mut framebuffers = Ring::new(lcm, Framebuffer::default());
@@ -332,4 +328,22 @@ impl Renderer {
         }
         render_pass.framebuffers.move_next();
     }
+}
+
+fn gcd(a: usize, b: usize) -> usize {
+    let mut a_copy = a;
+    let mut b_copy = b;
+    while b_copy != 0 {
+        let temp = b_copy;
+        b_copy = a_copy % b_copy;
+        a_copy = temp;
+    }
+    a_copy
+}
+
+fn lcm_custom(a: usize, b: usize) -> usize {
+    if a == 0 || b == 0 {
+        return 0;
+    }
+    (a * b) / gcd(a, b)
 }

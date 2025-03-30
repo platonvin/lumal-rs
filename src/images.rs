@@ -1,6 +1,5 @@
 use crate::{ring::Ring, Renderer}; // Import the LumalRenderer struct
 use crate::{set_debug_names, Image};
-use anyhow::*;
 use std::ptr::{self};
 use vulkanalia::vk::{self, DeviceV1_0, Handle};
 use vulkanalia_vma::Alloc;
@@ -21,7 +20,7 @@ impl Renderer {
         mipmaps: u32,
         sample_count: vk::SampleCountFlags,
         #[cfg(feature = "debug_validation_names")] debug_name: Option<&str>,
-    ) -> Result<Image> {
+    ) -> Image {
         let image_aspect = aspect;
         let image_format = format;
         let image_extent = extent;
@@ -53,7 +52,8 @@ impl Renderer {
         };
 
         let (vk_image, allocation) =
-            unsafe { self.allocator.as_ref().unwrap().create_image(image_info, &alloc_info) }?;
+            unsafe { self.allocator.as_ref().unwrap().create_image(image_info, &alloc_info) }
+                .unwrap();
 
         let image_image = vk_image;
         let image_allocation = allocation;
@@ -62,7 +62,7 @@ impl Renderer {
             vk::ImageType::_1D => vk::ImageViewType::_1D,
             vk::ImageType::_2D => vk::ImageViewType::_2D,
             vk::ImageType::_3D => vk::ImageViewType::_3D,
-            _ => return Err(anyhow!("Unsupported image type")),
+            _ => return panic!("Unsupported image type"),
         };
 
         let mut view_info = vk::ImageViewCreateInfo {
@@ -89,7 +89,7 @@ impl Renderer {
             next: ptr::null(),
         };
 
-        let image_view = unsafe { self.device.create_image_view(&view_info, None)? };
+        let image_view = unsafe { self.device.create_image_view(&view_info, None).unwrap() };
 
         let mut image_mip_views = vec![];
         if mipmaps > 1 {
@@ -128,7 +128,7 @@ impl Renderer {
             (&image.view, "Image View")
         );
 
-        Ok(image)
+        image
     }
     #[cold]
     #[optimize(speed)]
@@ -145,7 +145,7 @@ impl Renderer {
         mipmaps: u32,
         sample_count: vk::SampleCountFlags,
         #[cfg(feature = "debug_validation_names")] debug_name: Option<&str>,
-    ) -> Result<Ring<Image>> {
+    ) -> Ring<Image> {
         // Create a vector to hold the images.
         let mut images = Vec::with_capacity(size);
 
@@ -163,15 +163,15 @@ impl Renderer {
                 sample_count,
                 #[cfg(feature = "debug_validation_names")]
                 debug_name,
-            )?;
+            );
             images.push(image);
         }
 
         // Return the Ring initialized with the images.
-        Ok(Ring {
+        Ring {
             data: images.into_boxed_slice(),
             index: 0,
-        })
+        }
     }
 
     #[cold]
