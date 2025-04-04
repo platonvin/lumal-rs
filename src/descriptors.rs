@@ -1,3 +1,5 @@
+use ash::{vk, Device};
+
 use crate::{
     ring::Ring, set_debug_names, Buffer, DescriptorCounter, Image, LumalSettings, RasterPipe,
     MAX_FRAMES_IN_FLIGHT,
@@ -5,9 +7,6 @@ use crate::{
 use crate::{set_debug_name, Renderer};
 use std::{any::TypeId, cell::UnsafeCell};
 use std::{option, ptr::null};
-use vulkanalia::vk::{self, DeviceV1_3};
-
-use vulkanalia::prelude::v1_3::*;
 
 #[derive(PartialEq, Eq, Clone)]
 pub enum BlendAttachment {
@@ -117,23 +116,23 @@ pub struct AttrFormOffs {
     pub offset: usize,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct DescriptorInfo {
+#[derive(Debug, Default)]
+pub struct DescriptorInfo<'a> {
     pub descriptor_type: vk::DescriptorType,
     pub relative_pos: RelativeDescriptorPos,
-    pub buffers: Option<Ring<Buffer>>,
-    pub images: Option<Ring<Image>>,
+    pub buffers: Option<&'a Ring<Buffer>>,
+    pub images: Option<&'a Ring<Image>>,
     pub image_sampler: vk::Sampler,
     pub image_layout: vk::ImageLayout, // Image layout for use (not current)
     pub specified_stages: vk::ShaderStageFlags,
 }
 
-impl DescriptorInfo {
+impl<'a> DescriptorInfo<'a> {
     pub fn make_new(
         descriptor_type: vk::DescriptorType,
         relative_pos: RelativeDescriptorPos,
-        buffers: Option<Ring<Buffer>>,
-        images: Option<Ring<Image>>,
+        buffers: Option<&'a Ring<Buffer>>,
+        images: Option<&'a Ring<Image>>,
         image_sampler: vk::Sampler,
         image_layout: vk::ImageLayout,
         stages: vk::ShaderStageFlags,
@@ -213,10 +212,9 @@ impl Renderer {
             .collect();
 
         let layout_info = vk::DescriptorSetLayoutCreateInfo {
-            s_type: vk::StructureType::DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
             flags,
             binding_count: bindings.len() as u32,
-            bindings: bindings.as_ptr(),
+            p_bindings: bindings.as_ptr(),
             ..Default::default()
         };
 
@@ -240,7 +238,7 @@ impl Renderer {
             ($name:ident) => {
                 if self.descriptor_counter.$name != 0 {
                     pool_sizes.push(vk::DescriptorPoolSize {
-                        type_: vk::DescriptorType::$name,
+                        ty: vk::DescriptorType::$name,
                         descriptor_count: self.descriptor_counter.$name,
                     });
                 }
@@ -259,10 +257,10 @@ impl Renderer {
         make_descriptor_type!(INPUT_ATTACHMENT);
 
         let pool_info = vk::DescriptorPoolCreateInfo {
-            s_type: vk::StructureType::DESCRIPTOR_POOL_CREATE_INFO,
             pool_size_count: pool_sizes.len() as u32,
-            pool_sizes: pool_sizes.as_ptr(),
+            p_pool_sizes: pool_sizes.as_ptr(),
             max_sets: self.descriptor_sets_count * self.settings.fif as u32,
+            flags: vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET,
             ..Default::default()
         };
 
@@ -279,14 +277,13 @@ impl Renderer {
     ) -> Ring<vk::DescriptorSet> {
         let layouts = vec![layout; count];
         let alloc_info = vk::DescriptorSetAllocateInfo {
-            s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
             descriptor_pool: pool,
             descriptor_set_count: layouts.len() as u32,
-            set_layouts: layouts.as_ptr(),
+            p_set_layouts: layouts.as_ptr(),
             ..Default::default()
         };
 
-        let mut ring = Ring::new(count, vk::DescriptorSet::null());
+        let mut ring = Ring::new(count);
         // return
         let vec = device
             .allocate_descriptor_sets(&alloc_info)
@@ -336,9 +333,7 @@ impl Renderer {
 
         self.descriptor_sets_count += (MAX_FRAMES_IN_FLIGHT as u32); // cuase dset per fif
     }
-}
 
-impl Renderer {
     // anounce is just a request, this is an actual logic
     #[cold]
     #[optimize(size)]
@@ -352,16 +347,15 @@ impl Renderer {
         stages: vk::ShaderStageFlags,
         #[cfg(feature = "debug_validation_names")] debug_name: Option<&str>,
     ) {
-        *descriptor_sets = Ring::new(MAX_FRAMES_IN_FLIGHT, vk::DescriptorSet::null());
+        *descriptor_sets = Ring::new(MAX_FRAMES_IN_FLIGHT);
         let dset_layouts = [*dset_layout; MAX_FRAMES_IN_FLIGHT];
         for frame_i in 0..MAX_FRAMES_IN_FLIGHT {
             descriptor_sets[frame_i] = device
                 .allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo {
-                    s_type: vk::StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
                     descriptor_pool: *descriptor_pool,
                     descriptor_set_count: MAX_FRAMES_IN_FLIGHT as u32,
-                    set_layouts: dset_layouts.as_ptr(),
-                    next: null(),
+                    p_set_layouts: dset_layouts.as_ptr(),
+                    ..Default::default()
                 })
                 .unwrap()[0];
         }
@@ -405,7 +399,7 @@ impl Renderer {
                         image_layout: desc.image_layout,
                         sampler: desc.image_sampler,
                     };
-                    writes[i].image_info = &image_infos[i];
+                    writes[i].p_image_info = &image_infos[i];
 
                     assert!(desc.buffers.is_none());
                     if desc.image_sampler != vk::Sampler::null()
@@ -419,7 +413,7 @@ impl Renderer {
                         offset: 0,
                         range: vk::WHOLE_SIZE as u64,
                     };
-                    writes[i].buffer_info = &buffer_infos[i];
+                    writes[i].p_buffer_info = &buffer_infos[i];
                 } else {
                     panic!("Unknown descriptor type");
                 }
@@ -433,7 +427,9 @@ impl Renderer {
     #[optimize(size)]
     pub fn flush_descriptor_setup(&mut self) {
         // (actually) create Vulkan descriptor pool
-        self.vulkan_data.descriptor_pool = unsafe { self.create_descriptor_pool() };
+        if self.vulkan_data.descriptor_pool == vk::DescriptorPool::null() {
+            self.vulkan_data.descriptor_pool = unsafe { self.create_descriptor_pool() };
+        }
     }
 
     #[cold]

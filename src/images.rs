@@ -1,20 +1,19 @@
 use crate::{ring::Ring, Renderer}; // Import the LumalRenderer struct
 use crate::{set_debug_names, Image};
-use std::ptr::{self};
-use vulkanalia::vk::{self, DeviceV1_0, Handle};
-use vulkanalia_vma::Alloc;
-use vulkanalia_vma::{self as vma};
+use ash::vk::{self, Handle};
+use gpu_allocator::vulkan as vma;
 
+use std::ptr::{self};
 impl Renderer {
     #[cold]
     #[optimize(speed)]
     pub fn create_image(
-        &self,
+        &mut self,
         image_type: vk::ImageType,
         format: vk::Format,
         usage: vk::ImageUsageFlags,
-        vma_usage: vma::MemoryUsage,
-        vma_flags: vma::AllocationCreateFlags,
+        // vma_usage: vma::MemoryUsage,
+        // vma_flags: vma::AllocationCreateFlags,
         aspect: vk::ImageAspectFlags,
         extent: vk::Extent3D,
         mipmaps: u32,
@@ -27,8 +26,6 @@ impl Renderer {
         let image_mip_levels = mipmaps;
 
         let image_info = vk::ImageCreateInfo {
-            s_type: vk::StructureType::IMAGE_CREATE_INFO,
-            flags: vk::ImageCreateFlags::empty(),
             image_type,
             format,
             extent,
@@ -38,36 +35,38 @@ impl Renderer {
             tiling: vk::ImageTiling::OPTIMAL,
             usage,
             sharing_mode: vk::SharingMode::EXCLUSIVE,
-            queue_family_index_count: 0,
-            // p_queue_family_indices: ptr::null(),
             initial_layout: vk::ImageLayout::UNDEFINED,
-            next: ptr::null(),
-            queue_family_indices: ptr::null(),
-        };
-
-        let alloc_info = vma::AllocationOptions {
-            usage: vma_usage,
-            flags: vma_flags,
+            queue_family_index_count: 0,
             ..Default::default()
         };
 
-        let (vk_image, allocation) =
-            unsafe { self.allocator.as_ref().unwrap().create_image(image_info, &alloc_info) }
-                .unwrap();
+        let vk_image = unsafe { self.device.create_image(&image_info, None).unwrap() };
+        let requirements = unsafe { self.device.get_image_memory_requirements(vk_image) };
 
-        let image_image = vk_image;
-        let image_allocation = allocation;
+        let alloc_info = vma::AllocationCreateDesc {
+            name: "",
+            requirements: requirements,
+            location: gpu_allocator::MemoryLocation::GpuOnly,
+            linear: false,
+            allocation_scheme: vma::AllocationScheme::GpuAllocatorManaged,
+        };
+
+        let allocation = unsafe { self.allocator.allocate(&alloc_info) }.unwrap();
+
+        unsafe {
+            self.device
+                .bind_image_memory(vk_image, allocation.memory(), allocation.offset())
+                .unwrap()
+        };
 
         let view_type = match image_type {
-            vk::ImageType::_1D => vk::ImageViewType::_1D,
-            vk::ImageType::_2D => vk::ImageViewType::_2D,
-            vk::ImageType::_3D => vk::ImageViewType::_3D,
+            vk::ImageType::TYPE_1D => vk::ImageViewType::TYPE_1D,
+            vk::ImageType::TYPE_2D => vk::ImageViewType::TYPE_2D,
+            vk::ImageType::TYPE_3D => vk::ImageViewType::TYPE_3D,
             _ => return panic!("Unsupported image type"),
         };
 
         let mut view_info = vk::ImageViewCreateInfo {
-            s_type: vk::StructureType::IMAGE_VIEW_CREATE_INFO,
-            // p_next: std::ptr::null(),
             flags: vk::ImageViewCreateFlags::empty(),
             image: vk_image,
             view_type,
@@ -86,7 +85,7 @@ impl Renderer {
                 base_array_layer: 0,
                 layer_count: 1,
             },
-            next: ptr::null(),
+            ..Default::default()
         };
 
         let image_view = unsafe { self.device.create_image_view(&view_info, None).unwrap() };
@@ -105,8 +104,8 @@ impl Renderer {
         }
 
         let image = Image {
-            image: image_image,
-            allocation: image_allocation,
+            image: vk_image,
+            allocation: allocation,
             view: image_view,
             mip_views: image_mip_views,
             format: image_format,
@@ -125,7 +124,8 @@ impl Renderer {
             self,
             debug_name,
             (&image.image, "Image"),
-            (&image.view, "Image View")
+            (&image.view, "Image View"),
+            (&image.allocation.memory(), "Image Allocation Device Memory")
         );
 
         image
@@ -133,13 +133,13 @@ impl Renderer {
     #[cold]
     #[optimize(speed)]
     pub fn create_image_ring(
-        &self,
+        &mut self,
         size: usize,
         image_type: vk::ImageType,
         format: vk::Format,
         usage: vk::ImageUsageFlags,
-        vma_usage: vma::MemoryUsage,
-        vma_flags: vma::AllocationCreateFlags,
+        // vma_usage: vma::MemoryUsage,
+        // vma_flags: vma::AllocationCreateFlags,
         aspect: vk::ImageAspectFlags,
         extent: vk::Extent3D,
         mipmaps: u32,
@@ -155,8 +155,8 @@ impl Renderer {
                 image_type,
                 format,
                 usage,
-                vma_usage,
-                vma_flags,
+                // vma_usage,
+                // vma_flags,
                 aspect,
                 extent,
                 mipmaps,
@@ -176,17 +176,18 @@ impl Renderer {
 
     #[cold]
     #[optimize(speed)]
-    pub fn destroy_image(&self, img: &Image) {
+    pub fn destroy_image(&mut self, img: Image) {
         unsafe {
             self.device.destroy_image_view(img.view, None);
-            self.allocator.as_ref().unwrap().destroy_image(img.image, img.allocation);
+            self.allocator.free(img.allocation).unwrap();
+            self.device.destroy_image(img.image, None);
         };
     }
 
     #[cold]
     #[optimize(speed)]
-    pub fn destroy_image_ring(&self, images: &Ring<Image>) {
-        for img in images {
+    pub fn destroy_image_ring(&mut self, mut images: Ring<Image>) {
+        for img in images.data {
             self.destroy_image(img);
         }
     }

@@ -5,18 +5,15 @@ use crate::MAX_FRAMES_IN_FLIGHT;
 use std::ops::{Index, IndexMut}; // lol
 
 #[derive(Clone, Debug, Default)]
-pub struct Ring<T: Default + Clone> {
+pub struct Ring<T: Default> {
     pub data: Box<[T]>, // i would love to move len out from Box
     pub index: usize,
 }
 
-impl<T: Default + Clone> Ring<T> {
-    /// Creates a new `Ring` with a given size and initial value for all elements.
-    pub fn new(size: usize, initial_value: T) -> Self
-    where
-        T: Clone,
-    {
-        let data = vec![initial_value; size].into_boxed_slice();
+impl<T: Default> Ring<T> {
+    /// Creates a new `Ring` with a given size and initializes all elements with `T::default()`.
+    pub fn new(size: usize) -> Self {
+        let data = (0..size).map(|_| T::default()).collect::<Vec<_>>().into_boxed_slice();
         Self { data, index: 0 }
     }
     pub fn from_vec(data: Vec<T>) -> Self {
@@ -25,12 +22,21 @@ impl<T: Default + Clone> Ring<T> {
             index: 0,
         }
     }
-    pub fn resize(&mut self, size: usize, initial_value: T) {
-        let mut new_data = vec![initial_value; size];
-        // Copy existing data, up to the smaller of the old and new sizes.
+    /// Resizes the `Ring` and initializes new elements with `T::default()`.
+    /// Existing elements are moved to the new `data` array.
+    pub fn resize(&mut self, size: usize) {
+        let mut new_data = (0..size).map(|_| T::default()).collect::<Vec<_>>();
+        // Move existing data, up to the smaller of the old and new sizes.
         let len = std::cmp::min(self.data.len(), size);
 
-        new_data[..len].clone_from_slice(&self.data[..len]);
+        for i in 0..len {
+            new_data[i] = std::mem::replace(&mut self.data[i], T::default());
+        }
+
+        // Drop remaining elements from the old data if shrinking
+        if size < self.data.len() {
+            // No need to explicitly drop, Box will handle it when it goes out of scope
+        }
 
         self.data = new_data.into_boxed_slice();
 
@@ -133,10 +139,17 @@ impl<T: Default + Clone> Ring<T> {
     pub fn first(&self) -> &T {
         &self.data[0]
     }
+
+    pub fn iter_mut(&mut self) -> RingIteratorMut<T> {
+        RingIteratorMut {
+            ring: self,
+            position: 0,
+        }
+    }
 }
 
 /// Implement `Index` for read-only access using square brackets.
-impl<T: Default + Clone> Index<usize> for Ring<T> {
+impl<T: Default> Index<usize> for Ring<T> {
     type Output = T;
 
     fn index(&self, idx: usize) -> &Self::Output {
@@ -145,19 +158,23 @@ impl<T: Default + Clone> Index<usize> for Ring<T> {
 }
 
 /// Implement `IndexMut` for mutable access using square brackets.
-impl<T: Default + Clone> IndexMut<usize> for Ring<T> {
+impl<T: Default> IndexMut<usize> for Ring<T> {
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
         self.get_mut(idx)
     }
 }
 
 /// Iterator for `Ring`.
-pub struct RingIterator<'a, T: Default + Clone> {
+pub struct RingIterator<'a, T: Default> {
     ring: &'a Ring<T>,
     position: usize,
 }
+pub struct RingIteratorMut<'a, T: Default> {
+    ring: &'a mut Ring<T>,
+    position: usize,
+}
 
-impl<'a, T: Default + Clone> IntoIterator for &'a Ring<T> {
+impl<'a, T: Default> IntoIterator for &'a Ring<T> {
     type Item = &'a T;
     type IntoIter = RingIterator<'a, T>;
 
@@ -169,7 +186,7 @@ impl<'a, T: Default + Clone> IntoIterator for &'a Ring<T> {
     }
 }
 
-impl<'a, T: Default + Clone> Iterator for RingIterator<'a, T> {
+impl<'a, T: Default> Iterator for RingIterator<'a, T> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -183,7 +200,7 @@ impl<'a, T: Default + Clone> Iterator for RingIterator<'a, T> {
     }
 }
 
-impl<T: Default + Clone> FromIterator<T> for Ring<T> {
+impl<T: Default> FromIterator<T> for Ring<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let data = iter.into_iter().collect::<Vec<_>>().into_boxed_slice();
         Self { data, index: 0 }

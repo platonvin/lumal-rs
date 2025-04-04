@@ -1,63 +1,60 @@
-use crate::{ring::Ring, Buffer, Renderer}; // Import the LumalRenderer struct
+use crate::{atrace, ring::Ring, Buffer, Renderer}; // Import the LumalRenderer struct
+use ash::vk::{self, BufferUsageFlags};
 use std::ptr::{self, copy_nonoverlapping};
-use vulkanalia::vk::{self, BufferUsageFlags};
 
-use vulkanalia_vma::Alloc;
-use vulkanalia_vma::{self as vma};
+use gpu_allocator::vulkan::{self as vma, AllocationCreateDesc};
 
 impl Renderer {
     // creates a GPU buffer
     #[cold]
     #[optimize(size)]
-    pub fn create_buffer(&self, usage: vk::BufferUsageFlags, size: usize, host: bool) -> Buffer {
-        // buffers.allocate(self.vulkan_data.settings.fif as usize);
-        // buffers = Ring::new(self.vulkan_data.settings.fif as usize, Buffer::default());
-
+    pub fn create_buffer(
+        &mut self,
+        usage: vk::BufferUsageFlags,
+        size: usize,
+        host: bool,
+    ) -> Buffer {
         let buffer_info = vk::BufferCreateInfo {
-            s_type: vk::StructureType::BUFFER_CREATE_INFO,
-            // p_next: std::ptr::null(),
             flags: vk::BufferCreateFlags::empty(),
             size: size as vk::DeviceSize,
             usage,
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             queue_family_index_count: 0,
-            // p_queue_family_indices: std::ptr::null(),
-            next: ptr::null(),
-            queue_family_indices: ptr::null(),
-        };
-
-        let alloc_info = vma::AllocationOptions {
-            flags: if host {
-                vma::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE
-            } else {
-                vma::AllocationCreateFlags::empty()
-            },
-            required_flags: if host {
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
-            } else {
-                vk::MemoryPropertyFlags::empty()
-            },
-            usage: vma::MemoryUsage::Auto,
             ..Default::default()
         };
 
-        let (vk_buffer, allocation) =
-            unsafe { self.allocator.as_ref().unwrap().create_buffer(buffer_info, &alloc_info) }
-                .unwrap();
+        let location = if host {
+            gpu_allocator::MemoryLocation::CpuToGpu
+        } else {
+            gpu_allocator::MemoryLocation::GpuOnly
+        };
+
+        let vk_buffer = unsafe { self.device.create_buffer(&buffer_info, None) }.unwrap();
+        let requirements = unsafe { self.device.get_buffer_memory_requirements(vk_buffer) };
+
+        let alloc_info = vma::AllocationCreateDesc {
+            requirements: requirements,
+            location,
+            allocation_scheme: vma::AllocationScheme::GpuAllocatorManaged,
+            linear: true, // buffers are always linear
+            name: "",
+        };
+
+        let allocation = self.allocator.allocate(&alloc_info).unwrap();
+
+        // Bind memory to the buffer
+        unsafe {
+            self.device
+                .bind_buffer_memory(vk_buffer, allocation.memory(), allocation.offset())
+                .unwrap()
+        };
 
         // TODO: Integrated CPU memory utilization
         // TODO: what if it fails? Different set of flags?
-        let mut mapped = None;
-        if host {
-            // basically make so CPU can read&write buffer memory
-            // this is very complicated under the hood cause memory is literally on GPU and is accessed via PCI-E bus
-            mapped =
-                Some(unsafe { self.allocator.as_ref().unwrap().map_memory(allocation).unwrap() });
-        }
         Buffer {
             buffer: vk_buffer,
             allocation,
-            mapped,
+            // mapped,
         }
     }
 
@@ -65,7 +62,7 @@ impl Renderer {
     #[cold]
     #[optimize(size)]
     pub fn create_buffer_rings(
-        &self,
+        &mut self,
         ring_size: usize,
         usage: vk::BufferUsageFlags,
         biffer_size: usize,
@@ -89,20 +86,21 @@ impl Renderer {
 
     #[cold]
     #[optimize(size)]
-    pub fn destroy_buffer(&self, buf: Buffer) {
+    pub fn destroy_buffer(&mut self, buf: Buffer) {
         unsafe {
             // unmap if mapped
-            match buf.mapped {
-                Some(_) => self.allocator.as_ref().unwrap().unmap_memory(buf.allocation),
-                None => {} // do nothing
-            }
-            self.allocator.as_ref().unwrap().destroy_buffer(buf.buffer, buf.allocation);
+            // match buf.mapped {
+            //     Some(_) => self.device.unmap_memory(buf.allocation.memory()),
+            //     None => {} // do nothing
+            // }
+            self.allocator.free(buf.allocation).unwrap();
+            self.device.destroy_buffer(buf.buffer, None);
         };
     }
 
     #[cold]
     #[optimize(size)]
-    pub fn destroy_buffer_ring(&self, buffers: Ring<Buffer>) {
+    pub fn destroy_buffer_ring(&mut self, buffers: Ring<Buffer>) {
         for buf in buffers.data {
             self.destroy_buffer(buf);
         }
@@ -132,7 +130,7 @@ impl Renderer {
         unsafe {
             copy_nonoverlapping(
                 elements.as_ptr(),
-                staging_buffer.mapped.unwrap() as *mut T,
+                staging_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut T,
                 count,
             );
         }

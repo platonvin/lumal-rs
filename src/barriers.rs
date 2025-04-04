@@ -1,8 +1,7 @@
 use std::ptr::null;
 
 use crate::{Buffer, Image, Renderer};
-use vk::{BufferMemoryBarrier, MemoryBarrier, WHOLE_SIZE};
-use vulkanalia::prelude::v1_3::*;
+use ash::vk::{self, BufferMemoryBarrier, MemoryBarrier, WHOLE_SIZE};
 
 // just a wrapper for barriers that suits my needs
 // it is missing a lot but it does not matter anyways - drivers dont give a fuck about precise barriers
@@ -10,7 +9,7 @@ use vulkanalia::prelude::v1_3::*;
 impl Renderer {
     #[cold]
     #[optimize(speed)]
-        pub fn image_memory_barrier(
+    pub fn image_memory_barrier(
         &self,
         cmdbuf: &vk::CommandBuffer,
         image: &Image,
@@ -22,7 +21,6 @@ impl Renderer {
         dst_layout: vk::ImageLayout,
     ) {
         let barrier: vk::ImageMemoryBarrier = vk::ImageMemoryBarrier {
-            s_type: vk::StructureType::IMAGE_MEMORY_BARRIER,
             old_layout: src_layout,
             new_layout: dst_layout,
             src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
@@ -37,7 +35,7 @@ impl Renderer {
             },
             src_access_mask,
             dst_access_mask,
-            next: null(), // imagine renaming null to nil in your codebase
+            ..Default::default()
         };
 
         unsafe {
@@ -55,7 +53,7 @@ impl Renderer {
 
     #[cold]
     #[optimize(speed)]
-        pub fn buffer_memory_barrier(
+    pub fn buffer_memory_barrier(
         &self,
         cmdbuf: &vk::CommandBuffer,
         buffer: &Buffer,
@@ -65,15 +63,14 @@ impl Renderer {
         dst_access_mask: vk::AccessFlags,
     ) {
         let barrier: vk::BufferMemoryBarrier = vk::BufferMemoryBarrier {
-            s_type: vk::StructureType::BUFFER_MEMORY_BARRIER,
             src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
             dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
             buffer: buffer.buffer,
             offset: 0,
             size: WHOLE_SIZE as u64,
-            next: null(),
             src_access_mask,
             dst_access_mask,
+            ..Default::default()
         };
 
         unsafe {

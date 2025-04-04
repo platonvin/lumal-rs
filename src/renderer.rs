@@ -1,11 +1,10 @@
 use crate::{read_file, ring::Ring, ComputePipe, RasterPipe, RenderPass};
 
 use crate::*;
+use ash::prelude::VkResult;
 use descriptors::*;
 
 use std::{error, ffi::CStr, ptr::null};
-use vulkanalia::prelude::v1_3::*;
-use vulkanalia::vk::{self, Cast, DeviceV1_3, DynamicState, SuccessCode};
 
 use std::result::Result::Ok;
 
@@ -39,7 +38,7 @@ impl Renderer {
         let index_code = unsafe {
             // this is index of swapchain image that we should render to
             // it is not just incremented-wrapped because driver might (and will) juggle them around for perfomance reasons
-            self.device.acquire_next_image_khr(
+            self.swapchain_loader.acquire_next_image(
                 self.vulkan_data.swapchain,
                 u64::MAX,
                 *self.vulkan_data.image_available_semaphores.current(),
@@ -56,14 +55,18 @@ impl Renderer {
         let wait_semaphores = [*self.vulkan_data.render_finished_semaphores.current()];
         let swapchains = [self.vulkan_data.swapchain];
         let image_indices = [self.image_index];
-        let present_info = vk::PresentInfoKHR::builder()
-            .wait_semaphores(&wait_semaphores)
-            .swapchains(&swapchains)
-            .image_indices(&image_indices);
+        let present_info = vk::PresentInfoKHR {
+            wait_semaphore_count: wait_semaphores.len() as u32,
+            p_wait_semaphores: wait_semaphores.as_ptr(),
+            swapchain_count: swapchains.len() as u32,
+            p_swapchains: swapchains.as_ptr(),
+            p_image_indices: image_indices.as_ptr(),
+            ..Default::default()
+        };
 
-        // TODO: figure out how do you make crates so unconvinient to use
         let error_code = unsafe {
-            self.device.queue_present_khr(self.vulkan_data.graphics_queue, &present_info)
+            self.swapchain_loader
+                .queue_present(self.vulkan_data.graphics_queue, &present_info)
         };
 
         self.process_success_code(error_code, window);
@@ -80,11 +83,16 @@ impl Renderer {
         let signal_semaphores = [*self.vulkan_data.render_finished_semaphores.current()];
         let wait_semaphores = [*self.vulkan_data.image_available_semaphores.current()];
         let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        let submit_info = vk::SubmitInfo::builder()
-            .wait_semaphores(&wait_semaphores)
-            .wait_dst_stage_mask(&wait_stages)
-            .command_buffers(command_buffers)
-            .signal_semaphores(&signal_semaphores);
+        let submit_info = vk::SubmitInfo {
+            wait_semaphore_count: wait_semaphores.len() as u32,
+            p_wait_semaphores: wait_semaphores.as_ptr(),
+            p_wait_dst_stage_mask: wait_stages.as_ptr(),
+            command_buffer_count: command_buffers.len() as u32,
+            p_command_buffers: command_buffers.as_ptr(),
+            signal_semaphore_count: signal_semaphores.len() as u32,
+            p_signal_semaphores: signal_semaphores.as_ptr(),
+            ..Default::default()
+        };
 
         unsafe {
             // ask a queue to exectue the commands in command buffer
@@ -110,36 +118,23 @@ impl Renderer {
     // does someone know how to make this cleaner?
     #[cold]
     #[optimize(speed)]
-    fn process_error_code(&mut self, index_code: Result<(u32, SuccessCode), vk::ErrorCode>) {
+    fn process_error_code(&mut self, index_code: VkResult<(u32, bool)>) {
         // man why did you corrode vulkan. Should i make my own fn wrapper?
         match index_code {
-            Ok((index, success_code)) => {
+            Ok((index, suboptimal)) => {
                 self.image_index = index;
-                match success_code {
-                    SuccessCode::SUCCESS => {
-                        // do nothing
-                    }
-                    SuccessCode::SUBOPTIMAL_KHR => {
-                        // i still do not really know if suboptimal should be recreated. Works on my machine ©
-                        self.should_recreate = true;
-                    }
-                    _ => {
-                        // log cause i dont know what to do with it
-                        println!("success_code on aquire_next_image_khr: {:?}", success_code);
-                    }
+                if suboptimal {
+                    self.should_recreate = true;
                 }
             }
-            Err(error_code) => {
-                match error_code {
-                    vk::ErrorCode::OUT_OF_DATE_KHR => {
+            Err(vk_res) => {
+                match vk_res {
+                    vk::Result::ERROR_OUT_OF_DATE_KHR => {
                         // out of date => clearly recreate
                         self.should_recreate = true;
                     }
                     _ => {
-                        panic!(
-                            "unknown error code on aquire_next_image_khr: {:?}",
-                            error_code
-                        );
+                        panic!("unknown error code on aquire_next_image_khr: {:?}", vk_res);
                     }
                 }
             }
@@ -149,36 +144,24 @@ impl Renderer {
     // does someone know how to make this cleaner?
     #[cold]
     #[optimize(speed)]
-    fn process_success_code(&mut self, index_code: VkResult<SuccessCode>, window: &Window) {
+    fn process_success_code(&mut self, index_code: VkResult<bool>, window: &Window) {
         match index_code {
-            Ok(success_code) => {
-                match success_code {
-                    SuccessCode::SUCCESS => { /* do nothing */ }
-                    SuccessCode::SUBOPTIMAL_KHR => {
-                        // i still do not really know if suboptimal should be recreated. Works on my machine ©
-                        self.should_recreate = true;
-                        self.recreate_swapchain(window);
-                    }
-                    _ => {
-                        // log cause i dont know what to do with it
-                        println!("success_code on aquire_next_image_khr: {:?}", success_code);
-                    }
+            Ok(suboptimal) => {
+                if suboptimal {
+                    // i still do not really know if suboptimal should be recreated. Works on my machine ©
+                    self.should_recreate = true;
+                    self.recreate_swapchain(window);
                 }
             }
-            Err(error_code) => {
-                match error_code {
-                    vk::ErrorCode::OUT_OF_DATE_KHR => {
-                        // out of date => clearly recreate
-                        self.should_recreate = true;
-                    }
-                    _ => {
-                        panic!(
-                            "unknown error code on aquire_next_image_khr: {:?}",
-                            error_code
-                        );
-                    }
+            Err(vk_res) => match vk_res {
+                vk::Result::ERROR_OUT_OF_DATE_KHR => {
+                    self.should_recreate = true;
+                    self.recreate_swapchain(window);
                 }
-            }
+                _ => {
+                    panic!("unknown error code on queue_present_khr: {:?}", vk_res);
+                }
+            },
         }
     }
 }

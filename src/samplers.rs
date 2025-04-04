@@ -1,9 +1,7 @@
+use ash::vk;
+
 use crate::{ring::Ring, Buffer, Renderer}; // Import the LumalRenderer struct
 use std::ptr;
-use vulkanalia::vk::{self, DeviceV1_0};
-
-use vulkanalia_vma::Alloc;
-use vulkanalia_vma::{self as vma};
 
 impl Renderer {
     #[cold]

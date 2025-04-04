@@ -13,15 +13,16 @@
     features = ["debug_validation_names"]
 
 [dependencies]
-    # funny thing is that vulkanalia-vma does not in fact support vulkanalia 0.26.0
-    vulkanalia = { version = "0.25.0", features = [
-        "libloading",
-        "provisional",
-        "window",
+    ash = { version = "0.38.0", default-features = false, features = [
+        "debug",
+        "loaded",
     ] }
-    vulkanalia-vma = { version = "0.2.0" }
+    gpu-allocator = { version = "0.27.0", default-features = false, features = [
+        "vulkan",
+    ] }
     winit = "0.30.9"
     paste = "1.0.15"
+ash-window = "0.13.0"
 
 [lib]
     name = "lumal"

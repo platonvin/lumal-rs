@@ -3,30 +3,30 @@ fn empty_arr<T>() -> &'static [T] {
 }
 
 use crate::{Image, Renderer};
-use vk::MemoryBarrier;
-use vulkanalia::prelude::v1_3::*;
+use ash::vk::{self, MemoryBarrier};
 
 impl Renderer {
     #[cold]
     #[optimize(speed)]
-        pub fn copy_whole_image(&self, cmdbuf: vk::CommandBuffer, src: &Image, dst: &Image) {
-        let copy_op = vk::ImageCopy::builder()
-            .src_subresource(vk::ImageSubresourceLayers {
+    pub fn copy_whole_image(&self, cmdbuf: vk::CommandBuffer, src: &Image, dst: &Image) {
+        let copy_op = vk::ImageCopy {
+            dst_subresource: vk::ImageSubresourceLayers {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
                 mip_level: 0,
                 base_array_layer: 0,
                 layer_count: 1,
-            })
-            .dst_subresource(vk::ImageSubresourceLayers {
+            },
+            src_subresource: vk::ImageSubresourceLayers {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
                 mip_level: 0,
                 base_array_layer: 0,
                 layer_count: 1,
-            })
-            .src_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
-            .dst_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
-            .extent(src.extent)
-            .build();
+            },
+            src_offset: vk::Offset3D { x: 0, y: 0, z: 0 },
+            dst_offset: vk::Offset3D { x: 0, y: 0, z: 0 },
+            extent: src.extent,
+            ..Default::default()
+        };
 
         unsafe {
             self.device.cmd_copy_image(
@@ -72,7 +72,7 @@ impl Renderer {
     // basically copy image into another image (with possible dimension mismatch and thus scaling)
     #[cold]
     #[optimize(speed)]
-        pub fn blit_whole_image(
+    pub fn blit_whole_image(
         &self,
         cmdbuf: vk::CommandBuffer,
         src: &Image,
@@ -97,22 +97,23 @@ impl Renderer {
             },
         ];
 
-        let blit_op = vk::ImageBlit::builder()
-            .src_subresource(vk::ImageSubresourceLayers {
+        let blit_op = vk::ImageBlit {
+            src_subresource: vk::ImageSubresourceLayers {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
                 mip_level: 0,
                 base_array_layer: 0,
                 layer_count: 1,
-            })
-            .dst_subresource(vk::ImageSubresourceLayers {
+            },
+            dst_subresource: vk::ImageSubresourceLayers {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
                 mip_level: 0,
                 base_array_layer: 0,
                 layer_count: 1,
-            })
-            .src_offsets(src_offsets)
-            .dst_offsets(dst_offsets)
-            .build();
+            },
+            src_offsets: src_offsets,
+            dst_offsets: dst_offsets,
+            ..Default::default()
+        };
 
         unsafe {
             self.device.cmd_blit_image(
@@ -125,22 +126,23 @@ impl Renderer {
                 filter,
             );
 
-            let barrier = vk::ImageMemoryBarrier::builder()
-                .old_layout(vk::ImageLayout::GENERAL)
-                .new_layout(vk::ImageLayout::GENERAL)
-                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .image(dst.image)
-                .subresource_range(vk::ImageSubresourceRange {
+            let barrier = vk::ImageMemoryBarrier {
+                old_layout: vk::ImageLayout::GENERAL,
+                new_layout: vk::ImageLayout::GENERAL,
+                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                image: dst.image,
+                subresource_range: vk::ImageSubresourceRange {
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     base_mip_level: 0,
                     level_count: 1,
                     base_array_layer: 0,
                     layer_count: 1,
-                })
-                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                .dst_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE)
-                .build();
+                },
+                src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
+                dst_access_mask: vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE,
+                ..Default::default()
+            };
 
             self.device.cmd_pipeline_barrier(
                 cmdbuf,
@@ -157,7 +159,7 @@ impl Renderer {
     // finds first image format that is supported by device
     #[cold]
     #[optimize(size)]
-        pub fn find_supported_format(
+    pub fn find_supported_format(
         &self,
         candidates: &[vk::Format],
         ty: vk::ImageType,
@@ -185,7 +187,7 @@ impl Renderer {
 
     #[cold]
     #[optimize(speed)]
-        pub fn cmd_set_viewport(&self, cmdbuf: vk::CommandBuffer, width: u32, height: u32) {
+    pub fn cmd_set_viewport(&self, cmdbuf: vk::CommandBuffer, width: u32, height: u32) {
         let viewport = vk::Viewport {
             x: 0.0,
             y: 0.0,

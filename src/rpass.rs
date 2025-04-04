@@ -1,5 +1,7 @@
 use std::{collections::HashMap, f64::consts::E, ptr::null};
 
+use ash::vk;
+
 use crate::Renderer;
 use crate::{
     atrace,
@@ -7,10 +9,8 @@ use crate::{
     ring::Ring,
     trace, Buffer, DescriptorCounter, Image, LumalSettings, RasterPipe, RenderPass,
 };
-use vulkanalia::vk::{self, DeviceV1_3, Framebuffer};
 
 use crate::function;
-use vulkanalia::prelude::v1_3::*;
 
 impl Renderer {
     #[cold]
@@ -47,7 +47,6 @@ impl Renderer {
         let mut img2ref = HashMap::new();
         let mut clears = Vec::new();
 
-        trace!();
         for (i, attachment) in attachments.iter().enumerate() {
             let images = attachment.images;
 
@@ -57,7 +56,7 @@ impl Renderer {
 
             adescs[i] = vk::AttachmentDescription {
                 format: first_image.format,
-                samples: vk::SampleCountFlags::_1,
+                samples: vk::SampleCountFlags::TYPE_1,
                 load_op: attachment.load.to_vk_load(),
                 store_op: attachment.store.to_vk_store(),
                 stencil_load_op: attachment.sload.to_vk_load(),
@@ -84,7 +83,6 @@ impl Renderer {
 
             clears.push(attachment.clear);
         }
-        trace!();
 
         rpass.clear_colors = clears;
 
@@ -109,48 +107,43 @@ impl Renderer {
                 sas_refs[i].a_input.push(arefs[index]);
             }
         }
-        trace!();
 
         assert!(subpasses.len() == sas_refs.len());
         for (i, sas) in sas_refs.iter_mut().enumerate() {
             subpasses[i].color_attachment_count = sas.a_color.len() as u32;
-            subpasses[i].color_attachments = sas.a_color.as_ptr();
+            subpasses[i].p_color_attachments = sas.a_color.as_ptr();
             subpasses[i].input_attachment_count = sas.a_input.len() as u32;
-            subpasses[i].input_attachments = sas.a_input.as_ptr();
+            subpasses[i].p_input_attachments = sas.a_input.as_ptr();
             // we cant just reference attachment hidden in Option because its literally not what we want
             // aka we want *a_depth, not *Option<a_depth> cause there is (might be) more bits (from enum)
-            subpasses[i].depth_stencil_attachment = match sas.a_depth {
+            subpasses[i].p_depth_stencil_attachment = match sas.a_depth {
                 Some(_) => sas.a_depth.as_mut().unwrap(),
                 None => null(),
             }
         }
-
-        trace!();
 
         for i in 0..spass_attachs.len() {
             for pipe in &mut *spass_attachs[i].pipes {
                 pipe.subpass_id = i as i32;
             }
         }
-        trace!();
 
         // not real vulkan struct, just barriers inside a subpass (currently, dummy barriers)
         let dependencies = Self::create_subpass_dependencies(spass_attachs);
 
         // typical Vulkan createinfo struct
-        trace!();
+
         let create_info = vk::RenderPassCreateInfo {
             s_type: vk::StructureType::RENDER_PASS_CREATE_INFO,
             attachment_count: adescs.len() as u32,
-            attachments: adescs.as_ptr(),
+            p_attachments: adescs.as_ptr(),
             subpass_count: subpasses.len() as u32,
-            subpasses: subpasses.as_ptr(),
+            p_subpasses: subpasses.as_ptr(),
             dependency_count: dependencies.len() as u32,
-            dependencies: dependencies.as_ptr(),
+            p_dependencies: dependencies.as_ptr(),
             ..Default::default()
         };
 
-        trace!();
         // call Vulkan function to actually create the render pass
         let render_pass = unsafe {
             self.device
@@ -158,7 +151,6 @@ impl Renderer {
                 .expect("Failed to create render pass")
         };
         assert!(render_pass != vk::RenderPass::null());
-        trace!();
 
         // Pipes (which are abstractions of Vulkan pipelines) need to know the render pass
         for spass_attach in spass_attachs {
@@ -177,7 +169,6 @@ impl Renderer {
         let binding: Vec<&Ring<Image>> =
             attachments.iter().filter_map(|desc| Some(unsafe { &*desc.images })).collect();
         let fb_images: &[&Ring<Image>] = binding.as_slice();
-        trace!();
 
         rpass.framebuffers = self.create_framebuffers(
             render_pass,
@@ -185,7 +176,6 @@ impl Renderer {
             rpass.extent.width,
             rpass.extent.height,
         );
-        trace!();
 
         rpass
     }
@@ -252,30 +242,28 @@ impl Renderer {
         height: u32,
     ) -> Ring<vk::Framebuffer> {
         // Calculate Least Common Multiple (LCM) of the sizes of the image view rings
-        let lcm = imgs4views.iter().map(|v| (unsafe { (**v).clone() }).len()).fold(1, lcm_custom);
+        let lcm = imgs4views.iter().map(|v| (unsafe { (**v).len() }).clone()).fold(1, lcm_custom);
         assert!(lcm != 0);
 
-        let mut framebuffers = Ring::new(lcm, Framebuffer::default());
+        let mut framebuffers = Ring::new(lcm);
 
         for i in 0..lcm {
-            let mut attachments = Vec::new();
+            let mut attachment_views = Vec::new();
 
             for imgs in imgs4views {
-                let internal_iter = i % unsafe { (**imgs).clone() }.len();
-                attachments.push((unsafe { (**imgs).clone() })[internal_iter].clone());
+                let internal_iter = i % unsafe { (**imgs).len() };
+                attachment_views.push((unsafe { (**imgs)[internal_iter].view.clone() }));
             }
 
-            let iter = attachments.iter();
-            let map = iter.map(|a| a.view);
-            let collect = map.collect::<Vec<vk::ImageView>>();
-            let attachments_slice = collect.as_slice();
-
-            let framebuffer_info = vk::FramebufferCreateInfo::builder()
-                .render_pass(render_pass)
-                .attachments(attachments_slice)
-                .width(width)
-                .height(height)
-                .layers(1);
+            let framebuffer_info = vk::FramebufferCreateInfo {
+                render_pass,
+                attachment_count: attachment_views.len() as u32,
+                p_attachments: attachment_views.as_ptr(),
+                width,
+                height,
+                layers: 1,
+                ..Default::default()
+            };
 
             let framebuffer = unsafe {
                 self.device
@@ -297,14 +285,17 @@ impl Renderer {
         render_pass: &RenderPass,
         inline: vk::SubpassContents,
     ) {
-        let begin_info = vk::RenderPassBeginInfo::builder()
-            .render_pass(render_pass.render_pass)
-            .framebuffer(*render_pass.framebuffers.current())
-            .render_area(vk::Rect2D {
+        let begin_info = vk::RenderPassBeginInfo {
+            render_pass: render_pass.render_pass,
+            framebuffer: *render_pass.framebuffers.current(),
+            render_area: vk::Rect2D {
                 offset: vk::Offset2D { x: 0, y: 0 },
                 extent: render_pass.extent,
-            })
-            .clear_values(render_pass.clear_colors.as_slice());
+            },
+            clear_value_count: render_pass.clear_colors.len() as u32,
+            p_clear_values: render_pass.clear_colors.as_slice().as_ptr(),
+            ..Default::default()
+        };
 
         unsafe {
             self.device.cmd_begin_render_pass(*command_buffer, &begin_info, inline);

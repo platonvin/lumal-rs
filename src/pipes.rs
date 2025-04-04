@@ -3,14 +3,10 @@ use crate::{read_file, ring::Ring, ComputePipe, RasterPipe, RenderPass};
 use crate::*;
 use descriptors::*;
 
+use ash::vk::{self, CompareOp, DynamicState, StencilOp};
 use std::{error, ffi::CStr, ptr::slice_from_raw_parts};
-use vulkanalia::vk::{
-    self, Cast, CompareOp, DebugMarkerObjectNameInfoEXT, DebugReportObjectTypeEXT, DeviceV1_3,
-    DynamicState, ExtDebugMarkerExtension, StencilOp,
-};
-use vulkanalia::{prelude::v1_3::*, vk::EXT_DEBUG_UTILS_EXTENSION};
 
-const PREFIXES: &[&str] = &["../shaders/", "../../shaders/", "shaders/compiled/"];
+// const PREFIXES: &[&str] = &["../shaders/", "../../shaders/", "shaders/compiled/"];
 
 impl Renderer {
     #[cold]
@@ -23,12 +19,15 @@ impl Renderer {
             self.device.destroy_pipeline(pipe.line, None);
             self.device.destroy_pipeline_layout(pipe.line_layout, None);
             self.device.destroy_descriptor_set_layout(pipe.set_layout, None);
+            self.device
+                .free_descriptor_sets(self.vulkan_data.descriptor_pool, pipe.sets.as_slice())
+                .unwrap();
         }
         // reset the whole thing. Its like raii but explicit
         *pipe = ComputePipe {
             line: vk::Pipeline::null(),
             line_layout: vk::PipelineLayout::null(),
-            sets: Ring::new(0, vk::DescriptorSet::null()),
+            sets: Ring::new(0),
             set_layout: vk::DescriptorSetLayout::null(),
         };
     }
@@ -42,6 +41,9 @@ impl Renderer {
             self.device.destroy_pipeline(pipe.line, None);
             self.device.destroy_pipeline_layout(pipe.line_layout, None);
             self.device.destroy_descriptor_set_layout(pipe.set_layout, None);
+            self.device
+                .free_descriptor_sets(self.vulkan_data.descriptor_pool, pipe.sets.as_slice())
+                .unwrap();
         }
         // reset the whole thing. Its like raii but explicit
         // *pipe = RasterPipe {
@@ -80,29 +82,24 @@ impl Renderer {
             (
                 module,
                 vk::PipelineShaderStageCreateInfo {
-                    s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
-                    next: std::ptr::null(),
-                    flags: vk::PipelineShaderStageCreateFlags::empty(),
                     stage: vk::ShaderStageFlags::COMPUTE,
                     module,
-                    name: c"main".as_ptr() as *const i8,
-                    specialization_info: std::ptr::null(),
+                    p_name: c"main".as_ptr() as *const i8,
+                    ..Default::default()
                 },
             )
         };
 
         // Push constant range
-        let push_constant_range = if push_size > 0 {
-            Some(
-                vk::PushConstantRange::builder()
-                    .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                    .offset(0)
-                    .size(push_size)
-                    .build(),
-            )
-        } else {
-            None
-        };
+        // let push_constant_range = if push_size > 0 {
+        //     Some(vk::PushConstantRange {
+        //         stage_flags: vk::ShaderStageFlags::COMPUTE,
+        //         offset: 0,
+        //         size: push_size,
+        //     })
+        // } else {
+        //     None
+        // };
 
         // Descriptor set layouts
         let mut used_dset_layouts = vec![pipe.set_layout];
@@ -111,13 +108,21 @@ impl Renderer {
         }
 
         // Pipeline layout
-        let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder()
-            .set_layouts(&used_dset_layouts)
-            .push_constant_ranges(if let Some(range_ref) = &push_constant_range {
-                std::slice::from_ref(range_ref)
+        let pipeline_layout_info = vk::PipelineLayoutCreateInfo {
+            set_layout_count: used_dset_layouts.len() as u32,
+            p_set_layouts: used_dset_layouts.as_ptr(),
+            push_constant_range_count: (push_size > 0) as u32,
+            p_push_constant_ranges: if (push_size > 0) {
+                &vk::PushConstantRange {
+                    stage_flags: vk::ShaderStageFlags::COMPUTE,
+                    offset: 0,
+                    size: push_size,
+                }
             } else {
-                &[]
-            });
+                std::ptr::null()
+            },
+            ..Default::default()
+        };
 
         let line_layout = unsafe {
             self.device
@@ -126,16 +131,17 @@ impl Renderer {
         };
 
         // Compute pipeline
-        let pipeline_info = vk::ComputePipelineCreateInfo::builder()
-            .stage(comp_shader_stage_info)
-            .layout(line_layout)
-            .flags(create_flags);
+        let pipeline_info = vk::ComputePipelineCreateInfo {
+            stage: comp_shader_stage_info,
+            layout: line_layout,
+            flags: create_flags,
+            ..Default::default()
+        };
 
         let line = unsafe {
             self.device
-                .create_compute_pipelines(vk::PipelineCache::null(), &[*pipeline_info], None)
-                .expect("Failed to create compute pipeline")
-                .0[0]
+                .create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
+                .expect("Failed to create compute pipeline")[0]
         };
 
         // Clean up shader module
@@ -190,13 +196,10 @@ impl Renderer {
                 modules_to_destroy.push(module);
 
                 vk::PipelineShaderStageCreateInfo {
-                    s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
-                    next: std::ptr::null(),
-                    flags: vk::PipelineShaderStageCreateFlags::empty(),
                     stage: stage.stage,
                     module,
-                    name: c"main".as_ptr() as *const i8,
-                    specialization_info: std::ptr::null(),
+                    p_name: c"main".as_ptr() as *const i8,
+                    ..Default::default()
                 }
             })
             .collect();
@@ -207,7 +210,7 @@ impl Renderer {
             .map(|blend_attach| {
                 let mut vk_blend = vk::PipelineColorBlendAttachmentState {
                     blend_enable: vk::FALSE,
-                    color_write_mask: vk::ColorComponentFlags::all(),
+                    color_write_mask: vk::ColorComponentFlags::RGBA,
                     src_color_blend_factor: vk::BlendFactor::SRC_ALPHA,
                     dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
                     src_alpha_blend_factor: vk::BlendFactor::SRC_ALPHA,
@@ -258,14 +261,12 @@ impl Renderer {
             .collect();
 
         let color_blend_state = vk::PipelineColorBlendStateCreateInfo {
-            s_type: vk::StructureType::PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-            next: std::ptr::null(),
-            flags: vk::PipelineColorBlendStateCreateFlags::empty(),
             logic_op_enable: vk::FALSE,
             logic_op: vk::LogicOp::COPY,
             attachment_count: color_blend_attachments.len() as u32,
-            attachments: color_blend_attachments.as_ptr(),
+            p_attachments: color_blend_attachments.as_ptr(),
             blend_constants: [0.0; 4],
+            ..Default::default()
         };
 
         // Just vec of enabled dynamic states
@@ -274,11 +275,9 @@ impl Renderer {
 
         // Setup dynamic states
         let dynamic_state = vk::PipelineDynamicStateCreateInfo {
-            s_type: vk::StructureType::PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-            next: std::ptr::null(),
-            flags: vk::PipelineDynamicStateCreateFlags::empty(),
             dynamic_state_count: dynamic_states.len() as u32,
-            dynamic_states: dynamic_states.as_ptr(),
+            p_dynamic_states: dynamic_states.as_ptr(),
+            ..Default::default()
         };
 
         let used_dset_layouts: &[vk::DescriptorSetLayout] = match extra_dynamic_layout {
@@ -297,17 +296,15 @@ impl Renderer {
 
         // Setup pipeline layout
         let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo {
-            s_type: vk::StructureType::PIPELINE_LAYOUT_CREATE_INFO,
-            next: std::ptr::null(),
-            flags: vk::PipelineLayoutCreateFlags::empty(),
             set_layout_count: used_dset_layouts.len() as u32,
-            set_layouts: used_dset_layouts.as_ptr(),
+            p_set_layouts: used_dset_layouts.as_ptr(),
             push_constant_range_count: (push_size > 0) as u32,
-            push_constant_ranges: if (push_size > 0) {
+            p_push_constant_ranges: if (push_size > 0) {
                 &push_range
             } else {
                 std::ptr::null()
             },
+            ..Default::default()
         };
 
         let pipeline_layout = unsafe {
@@ -335,10 +332,10 @@ impl Renderer {
             0 => vk::PipelineVertexInputStateCreateInfo::default(),
             _ => vk::PipelineVertexInputStateCreateInfo {
                 vertex_binding_description_count: 1,
-                vertex_binding_descriptions: &binding_description,
+                p_vertex_binding_descriptions: &binding_description,
 
                 vertex_attribute_description_count: attr_desc.len() as u32,
-                vertex_attribute_descriptions: actual_attr_desc.as_ptr(),
+                p_vertex_attribute_descriptions: actual_attr_desc.as_ptr(),
                 ..Default::default()
             },
         };
@@ -370,7 +367,7 @@ impl Renderer {
         };
 
         let multisample_state = vk::PipelineMultisampleStateCreateInfo {
-            rasterization_samples: vk::SampleCountFlags::_1,
+            rasterization_samples: vk::SampleCountFlags::TYPE_1,
             sample_shading_enable: vk::FALSE,
             min_sample_shading: 0.0,
             ..Default::default()
@@ -395,46 +392,42 @@ impl Renderer {
             logic_op_enable: vk::FALSE,
             logic_op: vk::LogicOp::COPY,
             attachment_count: color_blend_attachments.len() as u32,
-            attachments: color_blend_attachments.as_ptr(),
+            p_attachments: color_blend_attachments.as_ptr(),
             blend_constants: [0.0; 4],
             ..Default::default()
         };
 
         // Finalize pipeline creation
         let pipeline_create_info = vk::GraphicsPipelineCreateInfo {
-            s_type: vk::StructureType::GRAPHICS_PIPELINE_CREATE_INFO,
-            next: std::ptr::null(),
-            flags: vk::PipelineCreateFlags::empty(),
             stage_count: pipeline_shader_stages.len() as u32,
-            stages: pipeline_shader_stages.as_ptr(),
-            vertex_input_state: &vertex_input_info,
-            input_assembly_state: &input_assembly_state,
-            tessellation_state: std::ptr::null(),
-            viewport_state: &viewport_state,
-            rasterization_state: &rasterizer,
-            multisample_state: &multisample_state,
-            depth_stencil_state: {
+            p_stages: pipeline_shader_stages.as_ptr(),
+            p_vertex_input_state: &vertex_input_info,
+            p_input_assembly_state: &input_assembly_state,
+            p_tessellation_state: std::ptr::null(),
+            p_viewport_state: &viewport_state,
+            p_rasterization_state: &rasterizer,
+            p_multisample_state: &multisample_state,
+            p_depth_stencil_state: {
                 if (depth_test == DepthTesting::DT_None && Self::stencil_is_empty(stencil)) {
                     std::ptr::null()
                 } else {
                     &depth_stencil
                 }
             },
-            color_blend_state: &color_blend_state,
-            dynamic_state: &dynamic_state,
+            p_color_blend_state: &color_blend_state,
+            p_dynamic_state: &dynamic_state,
             layout: pipeline_layout,
             render_pass: pipe.render_pass, // you HAVE TO set id in advance
             subpass: pipe.subpass_id as u32, // you HAVE TO set it in advance
-            base_pipeline_handle: vk::Pipeline::null(),
             base_pipeline_index: -1,
+            ..Default::default()
         };
 
         let pipeline = unsafe {
             self.device
                 .create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_create_info], None)
                 .unwrap()
-        }
-        .0[0];
+        }[0];
 
         modules_to_destroy
             .iter()
@@ -471,7 +464,11 @@ impl Renderer {
         let code_u32 =
             unsafe { std::slice::from_raw_parts(code.as_ptr() as *const u32, code.len() / 4) };
 
-        let create_info = vk::ShaderModuleCreateInfo::builder().code(code_u32);
+        let create_info = vk::ShaderModuleCreateInfo {
+            code_size: code.len(),
+            p_code: code_u32.as_ptr() as *const u32,
+            ..Default::default()
+        };
 
         unsafe {
             self.device
@@ -480,29 +477,27 @@ impl Renderer {
         }
     }
 
-    // Helper function for resolving shader paths
-    #[cold]
-    #[optimize(size)]
-    fn resolve_shader_path(prefixes: &[&str], file_name: String) -> Option<std::path::PathBuf> {
-        for prefix in prefixes {
-            let candidate = std::path::Path::new(prefix).join(file_name.as_str());
-            if candidate.exists() {
-                return Some(candidate);
-            }
-        }
-        None
-    }
+    // // Helper function for resolving shader paths
+    // #[cold]
+    // #[optimize(size)]
+    // fn resolve_shader_path(prefixes: &[&str], file_name: String) -> Option<std::path::PathBuf> {
+    //     for prefix in prefixes {
+    //         let candidate = std::path::Path::new(prefix).join(file_name.as_str());
+    //         if candidate.exists() {
+    //             return Some(candidate);
+    //         }
+    //     }
+    //     None
+    // }
 
     // Helper function for loading SPIR-V shader modules
     #[cold]
     #[optimize(size)]
     fn load_shader_module(device: &Device, spirv_code: &[u8]) -> vk::ShaderModule {
         let create_info = vk::ShaderModuleCreateInfo {
-            s_type: vk::StructureType::SHADER_MODULE_CREATE_INFO,
-            next: std::ptr::null(),
-            flags: vk::ShaderModuleCreateFlags::empty(),
             code_size: spirv_code.len(),
-            code: spirv_code.as_ptr() as *const u32,
+            p_code: spirv_code.as_ptr() as *const u32,
+            ..Default::default()
         };
         unsafe {
             device
