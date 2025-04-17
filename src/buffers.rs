@@ -68,20 +68,7 @@ impl Renderer {
         biffer_size: usize,
         host: bool,
     ) -> Ring<Buffer> {
-        // Create a vector to hold the images.
-        let mut buffers = Vec::with_capacity(ring_size);
-
-        // Initialize each image and push to the vector.
-        for _ in 0..ring_size {
-            let buffer = self.create_buffer(usage, biffer_size, host);
-            buffers.push(buffer);
-        }
-
-        // Return the Ring initialized with the images.
-        Ring {
-            data: buffers.into_boxed_slice(),
-            index: 0,
-        }
+        (0..ring_size).map(|_| self.create_buffer(usage, biffer_size, host)).collect()
     }
 
     #[cold]

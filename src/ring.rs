@@ -4,10 +4,64 @@
 use crate::MAX_FRAMES_IN_FLIGHT;
 use std::ops::{Index, IndexMut}; // lol
 
-#[derive(Clone, Debug, Default)]
-pub struct Ring<T: Default> {
+#[derive(Debug)]
+pub struct Ring<T> {
     pub data: Box<[T]>, // i would love to move len out from Box
     pub index: usize,
+}
+
+impl<T: Clone> Clone for Ring<T> {
+    fn clone(&self) -> Self {
+        Ring {
+            data: self.data.clone(),
+            index: self.index.clone(),
+        }
+    }
+}
+
+impl<T: Default> Default for Ring<T> {
+    fn default() -> Self {
+        Ring {
+            data: Default::default(),
+            index: Default::default(),
+        }
+    }
+}
+
+impl<T: Clone> Ring<T> {
+    /// Creates a new `Ring` with a given size and initializes all elements with `T::default()`.
+    pub fn new_clone(size: usize, value: T) -> Self {
+        let data = (0..size).map(|_| value.clone()).collect::<Vec<_>>().into_boxed_slice();
+        Self { data, index: 0 }
+    }
+    pub fn from_vec_clone(data: Vec<T>) -> Self {
+        Self {
+            data: data.into_boxed_slice(),
+            index: 0,
+        }
+    }
+    /// Resizes the `Ring` and initializes new elements with `T::default()`.
+    /// Existing elements are moved to the new `data` array.
+    pub fn resize_clone(&mut self, size: usize, value: T) {
+        let mut new_data = (0..size).map(|_| value.clone()).collect::<Vec<_>>();
+        // Move existing data, up to the smaller of the old and new sizes.
+        let len = std::cmp::min(self.data.len(), size);
+
+        for i in 0..len {
+            new_data[i] = std::mem::replace(&mut self.data[i], value.clone());
+        }
+
+        // Drop remaining elements from the old data if shrinking
+        if size < self.data.len() {
+            // No need to explicitly drop, Box will handle it when it goes out of scope
+        }
+
+        self.data = new_data.into_boxed_slice();
+
+        if self.data.len() <= self.index {
+            self.index = self.data.len() - 1;
+        }
+    }
 }
 
 impl<T: Default> Ring<T> {
@@ -15,12 +69,6 @@ impl<T: Default> Ring<T> {
     pub fn new(size: usize) -> Self {
         let data = (0..size).map(|_| T::default()).collect::<Vec<_>>().into_boxed_slice();
         Self { data, index: 0 }
-    }
-    pub fn from_vec(data: Vec<T>) -> Self {
-        Self {
-            data: data.into_boxed_slice(),
-            index: 0,
-        }
     }
     /// Resizes the `Ring` and initializes new elements with `T::default()`.
     /// Existing elements are moved to the new `data` array.
@@ -44,7 +92,9 @@ impl<T: Default> Ring<T> {
             self.index = self.data.len() - 1;
         }
     }
+}
 
+impl<T> Ring<T> {
     /// Returns the current element in the Ring.
     pub fn current(&self) -> &T {
         &self.data[self.index]
@@ -139,17 +189,46 @@ impl<T: Default> Ring<T> {
     pub fn first(&self) -> &T {
         &self.data[0]
     }
+}
 
-    pub fn iter_mut(&mut self) -> RingIteratorMut<T> {
-        RingIteratorMut {
-            ring: self,
-            position: 0,
+impl<T> Ring<T> {
+    /// Creates a new `Ring` with a given size and initializes all elements with `T::default()`.
+    pub fn new_with(size: usize, lambda: impl Fn(usize) -> T) -> Self {
+        let data = (0..size).map(|i| lambda(i)).collect::<Vec<_>>().into_boxed_slice();
+        Self { data, index: 0 }
+    }
+    pub fn from_vec(data: Vec<T>) -> Self {
+        Self {
+            data: data.into_boxed_slice(),
+            index: 0,
+        }
+    }
+    /// Resizes the `Ring` and initializes new elements with `T::default()`.
+    /// Existing elements are moved to the new `data` array.
+    pub fn resize_with(&mut self, size: usize, lambda: impl Fn(usize) -> T) {
+        let mut new_data = (0..size).map(|i| lambda(i)).collect::<Vec<_>>();
+        // Move existing data, up to the smaller of the old and new sizes.
+        let len = std::cmp::min(self.data.len(), size);
+
+        for i in 0..len {
+            new_data[i] = std::mem::replace(&mut self.data[i], lambda(i));
+        }
+
+        // Drop remaining elements from the old data if shrinking
+        if size < self.data.len() {
+            // No need to explicitly drop, Box will handle it when it goes out of scope
+        }
+
+        self.data = new_data.into_boxed_slice();
+
+        if self.data.len() <= self.index {
+            self.index = self.data.len() - 1;
         }
     }
 }
 
 /// Implement `Index` for read-only access using square brackets.
-impl<T: Default> Index<usize> for Ring<T> {
+impl<T> Index<usize> for Ring<T> {
     type Output = T;
 
     fn index(&self, idx: usize) -> &Self::Output {
@@ -158,23 +237,23 @@ impl<T: Default> Index<usize> for Ring<T> {
 }
 
 /// Implement `IndexMut` for mutable access using square brackets.
-impl<T: Default> IndexMut<usize> for Ring<T> {
+impl<T> IndexMut<usize> for Ring<T> {
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
         self.get_mut(idx)
     }
 }
 
 /// Iterator for `Ring`.
-pub struct RingIterator<'a, T: Default> {
+pub struct RingIterator<'a, T> {
     ring: &'a Ring<T>,
     position: usize,
 }
-pub struct RingIteratorMut<'a, T: Default> {
+pub struct RingIteratorMut<'a, T> {
     ring: &'a mut Ring<T>,
     position: usize,
 }
 
-impl<'a, T: Default> IntoIterator for &'a Ring<T> {
+impl<'a, T> IntoIterator for &'a Ring<T> {
     type Item = &'a T;
     type IntoIter = RingIterator<'a, T>;
 
@@ -186,7 +265,7 @@ impl<'a, T: Default> IntoIterator for &'a Ring<T> {
     }
 }
 
-impl<'a, T: Default> Iterator for RingIterator<'a, T> {
+impl<'a, T> Iterator for RingIterator<'a, T> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -200,11 +279,9 @@ impl<'a, T: Default> Iterator for RingIterator<'a, T> {
     }
 }
 
-impl<T: Default> FromIterator<T> for Ring<T> {
+impl<T> FromIterator<T> for Ring<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let data = iter.into_iter().collect::<Vec<_>>().into_boxed_slice();
         Self { data, index: 0 }
     }
 }
-
-// type RingHandle<T> = std::rc::Rc<Ring<T>>;

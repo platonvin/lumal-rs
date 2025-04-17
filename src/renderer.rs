@@ -150,13 +150,17 @@ impl Renderer {
                 if suboptimal {
                     // i still do not really know if suboptimal should be recreated. Works on my machine ©
                     self.should_recreate = true;
-                    self.recreate_swapchain(window);
+                    // we DO NOT recreate swaphcain here
+                    // DO NOT even FUCKING EVER THINK ABOUT IT
+                    // self.recreate_swapchain(window);
                 }
             }
             Err(vk_res) => match vk_res {
                 vk::Result::ERROR_OUT_OF_DATE_KHR => {
                     self.should_recreate = true;
-                    self.recreate_swapchain(window);
+                    // we DO NOT recreate swaphcain here
+                    // DO NOT even FUCKING EVER THINK ABOUT IT
+                    // self.recreate_swapchain(window);
                 }
                 _ => {
                     panic!("unknown error code on queue_present_khr: {:?}", vk_res);

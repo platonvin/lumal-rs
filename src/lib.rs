@@ -368,10 +368,8 @@ impl Renderer {
             println!("Validation layers requested.");
         }
         unsafe {
-            atrace!();
             let entry = Entry::load().expect("Failed to load Vulkan entry point");
             let instance = Renderer::create_instance(window, &entry, &mut vulkan_data);
-            atrace!();
             vulkan_data.surface = ash_window::create_surface(
                 &entry,
                 &instance,
@@ -380,48 +378,34 @@ impl Renderer {
                 None,
             )
             .unwrap();
-            atrace!();
             pick_physical_device(&instance, &entry, &mut vulkan_data);
-            atrace!();
             let device = create_logical_device(&entry, &instance, &mut vulkan_data);
-            atrace!();
 
             let mut allocator = Allocator::new(&AllocatorCreateDesc {
                 instance: instance.clone(),
                 device: device.clone(),
                 physical_device: vulkan_data.physical_device,
                 debug_settings: Default::default(),
-                buffer_device_address: true, // Ideally, check the BufferDeviceAddressFeatures struct.
+                buffer_device_address: false,
                 allocation_sizes: Default::default(),
             })
             .unwrap();
-            atrace!();
 
             create_swapchain(window, &instance, &entry, &device, &mut vulkan_data);
-            atrace!();
             // create_swapchain_image_views(&device, &mut vulkan_data);
             // these are handled by downstream user. Makes no sense to hardcode pipes in renderer
             // example.create_render_pass(&device, &mut data);
             // example.create_pipeline(&device, &mut data);
             // create_framebuffers(&device, &mut data);
             // create_command_buffers(&device, &mut vulkan_data);
-            atrace!();
             create_command_pool(&instance, &entry, &device, &mut vulkan_data);
-            atrace!();
             create_sync_objects(&device, &mut vulkan_data);
-            atrace!();
 
-            atrace!();
             let surface_loader = surface::Instance::new(&entry, &instance);
-            atrace!();
             let swapchain_loader = swapchain::Device::new(&instance, &device);
-            atrace!();
             let debug_utils_loader = debug_utils::Instance::new(&entry, &instance);
-            atrace!();
             let debug_utils_device_loader = debug_utils::Device::new(&instance, &device);
-            atrace!();
             let push_descriptors_loader = push_descriptor::Device::new(&instance, &device);
-            atrace!();
 
             Renderer {
                 allocator,
@@ -556,7 +540,7 @@ impl Renderer {
         entry.create_instance(&info, None).unwrap()
     }
     /// buffers, images, pipelines - everything created manually should be destroyed manually before this funcall
-    pub unsafe fn destroy(&mut self) {
+    pub unsafe fn destroy(mut self) {
         self.process_deletion_queues_untill_all_done();
         {
             self.device.destroy_descriptor_pool(self.vulkan_data.descriptor_pool, None);
@@ -566,12 +550,9 @@ impl Renderer {
         self.destroy_swapchain();
         self.destroy_sync_primitives();
 
-        // let allocator = std::mem::replace(
-        //     &mut self.allocator,
-        //     std::mem::MaybeUninit::zeroed().assume_init(),
-        // );
-
-        // std::mem::drop(allocator);
+        // i FUCKING HATE that they implement it in a drop
+        // how the fuck am i supposed to do it? Put it 7 lines below and it fucking segfaults
+        std::mem::drop(self.allocator);
 
         self.device.destroy_device(None);
         unsafe {
@@ -853,14 +834,14 @@ impl Renderer {
                 let image = self.image_deletion_queue[i].image;
                 let view = self.image_deletion_queue[i].view;
                 let mip_views = std::mem::take(&mut self.image_deletion_queue[i].mip_views);
-
+                let allocation = std::mem::take(&mut self.image_deletion_queue[i].allocation);
                 unsafe {
-                    self.device.destroy_image(image, None);
+                    self.allocator.free(allocation);
                     self.device.destroy_image_view(view, None);
                     for mip_view in mip_views {
                         self.device.destroy_image_view(mip_view, None);
                     }
-                    // TODO: Handle allocation cleanup
+                    self.device.destroy_image(image, None);
                 }
             }
             i += 1;
@@ -891,6 +872,7 @@ impl Renderer {
         unsafe {
             self.device.device_wait_idle().unwrap();
 
+            // in past, instead of manually recreating window, i used to pass lambdas to renderer for everything else that needs to be recreated
             // match self.destroy_swapchain_dependent_resources {
             //     Some(ref mut fun) => fun(window),
             //     None => { /* not fun */ }
@@ -1076,11 +1058,8 @@ extern "system" fn debug_callback(
 #[optimize(size)]
 unsafe fn pick_physical_device(instance: &Instance, entry: &Entry, data: &mut VulkanData) {
     for physical_device in instance.enumerate_physical_devices().unwrap() {
-        atrace!();
         let properties = instance.get_physical_device_properties(physical_device);
-        atrace!();
         if let Err(error) = check_physical_device(instance, entry, data, physical_device) {
-            atrace!();
             //TODO:
             println!(
                 "Skipping physical device (`{}`): {}",
@@ -1088,7 +1067,6 @@ unsafe fn pick_physical_device(instance: &Instance, entry: &Entry, data: &mut Vu
                 error
             );
         } else {
-            atrace!();
             println!(
                 "Selected physical device (`{}`).",
                 properties.device_name_as_c_str().unwrap().to_string_lossy()
@@ -1110,13 +1088,9 @@ unsafe fn check_physical_device(
     data: &VulkanData,
     physical_device: vk::PhysicalDevice,
 ) -> VkResult<()> {
-    atrace!();
     QueueFamilyIndices::get(instance, entry, data, physical_device)?;
-    atrace!();
     check_physical_device_extensions(instance, physical_device)?;
-    atrace!();
     let support = SwapchainSupport::get(instance, entry, data, physical_device)?;
-    atrace!();
     if support.formats.is_empty() || support.present_modes.is_empty() {
         // return Err(anyhow!(SuitabilityError("Insufficient swapchain support.")));
         println!("Insufficient swapchain support");
@@ -1132,13 +1106,11 @@ unsafe fn check_physical_device_extensions(
     instance: &Instance,
     physical_device: vk::PhysicalDevice,
 ) -> VkResult<()> {
-    atrace!();
     let extensions = instance
         .enumerate_device_extension_properties(physical_device)?
         .iter()
         .map(|e| e.extension_name)
         .collect::<HashSet<_>>();
-    atrace!();
 
     // Check if all required extensions are supported
     for required_ext in DEVICE_EXTENSIONS {
